@@ -5,10 +5,16 @@ Created on Mon Oct 21 10:20:19 2024
 @author: Simon Kern (@skjerns)
 """
 import mne
+import warnings
 from joblib import Memory, Parallel, delayed
 import numpy as np
 
-memory = Memory('xxx')
+memory = Memory(None)
+
+
+
+
+
 
 @memory.cache(verbose=0)
 def load_events(file, event_ids=None):
@@ -191,8 +197,6 @@ def load_epochs_bands(
     event_ids=None,
     tmin=-0.1,
     tmax=0.5,
-    ica=None,
-    autoreject=True,
     picks="meg",
     event_filter=None,
     n_jobs=1,
@@ -200,17 +204,13 @@ def load_epochs_bands(
 
     assert isinstance(bands, dict), f"bands must be dict, but is {type(bands)}"
 
-    if len(bands) > 1 and autoreject:
-        raise ValueError("If several bands are used, cannot reject epochs")
     log_append(
         file,
         "parameters_bands",
         {
             "file": file,
             "sfreq": sfreq,
-            "ica": ica,
             "event_ids": event_ids,
-            "autoreject": autoreject,
             "picks": picks,
             "tmin": tmin,
             "tmax": tmax,
@@ -229,10 +229,8 @@ def load_epochs_bands(
             event_ids=event_ids,
             tmin=tmin,
             tmax=tmax,
-            ica=ica,
             event_filter=event_filter,
             picks=picks,
-            autoreject=autoreject,
         )
         for lfreq, hfreq in bands.values()
     )
@@ -278,6 +276,9 @@ def load_epochs(
     data_y -= 1
 
     return data_x, data_y
+
+
+
 
 
 def load_segments(file, sfreq=100, markers=[[10, 11]], picks='meg',
@@ -357,8 +358,7 @@ def load_segments(file, sfreq=100, markers=[[10, 11]], picks='meg',
 
 @memory.cache
 def load_segments_bands(file, bands, sfreq=100, markers=[[10, 11]], picks='meg',
-                        ica=settings.default_ica_components, verbose='ERROR',
-                        n_jobs=3):
+                        verbose='ERROR', n_jobs=3):
     log_append(file, 'parameters_bands', {'file': file, 'sfreq': sfreq,
                                          'ica': ica, 'markers': markers,
                                          'picks': picks, 'bands': bands})
@@ -370,3 +370,112 @@ def load_segments_bands(file, bands, sfreq=100, markers=[[10, 11]], picks='meg',
     data_x = np.array(data_x).squeeze()
     data_x = default_normalize(data_x)
     return data_x
+
+
+
+
+#%% new functions as pipeline objects
+from sklearn.base import TransformerMixin, BaseEstimator
+from sklearn.pipeline import Pipeline
+import pathlib
+import logging
+
+class DataPipeline(Pipeline):
+    def __init__(self, steps, *, memory=None, verbose=False):
+        Pipeline.__init__(self, steps, memory=memory, verbose=verbose)
+        DataPipeline.check_steps(self, verbose=False)
+
+    def check_steps(self, verbose=True):
+        if verbose:
+            desc_in, func_in = self.steps[0]
+            print(0, f'{func_in.type_in[0]}\t->\t({func_in.__class__.__name__})')
+
+        for i, (desc_out, func_out) in enumerate(self.steps[:-1], 1):
+            for desc_in, func_in in self.steps[1:]:
+                assert func_out.type_out[0] == func_in.type_in[0]
+                if not verbose: continue
+                print(i, f'({func_out.__class__.__name__})\t->\t{func_out.type_out[0]}\t->\t({func_in.__class__.__name__})')
+        if verbose:
+            (desc_out, func_out) = self.steps[-1]
+            print(i+1, f'({func_out.__class__.__name__})\t->\t{func_out.type_out[0]}')
+
+    def set_param(self, **params):
+        """for all steps that implement this parameter, set this parameter
+        to the specified value. Will overwrite already explicitly set"""
+        for key, val in params.items():
+            found = False
+
+            for desc, func in self.steps:
+                if key in func._get_param_names():
+                    func.set_params(**{key:val})
+                    if self.verbose:
+                        logging.info(f'setting parameter {key=}:{val=} for {desc}={func}')
+                    found = True
+            if key in self._get_param_names():
+                self.set_params(**{key:val})
+                found = True
+
+            if not found:
+                raise ValueError(f'Did not find parameter "{key}" in any of the pipeline steps: {self.steps}')
+
+class BaseStep(TransformerMixin, BaseEstimator):
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        type_in, type_in_desc = self.type_in
+        type_out, type_out_desc = self.type_out
+
+        assert isinstance(X, type_in), f'Input of {self} is expected to be {self.type_in} ({self.type_in_desc}) but was {type(X)}'
+        result = self._transform(X)
+        assert isinstance(result, type_out),  f'Output of {self} is expected to be {self.type_in} ({self.type_in_desc}) but was {type(X)}'
+        return result
+
+class LoadRaw(BaseStep):
+    """load a raw file from disk"""
+    def __init__(self, *, preload=True, verbose=None, **kwargs):
+        self.type_in = (str, pathlib.Path), 'Location of the file'
+        self.type_out = mne.io.BaseRaw, 'Loaded raw file with nothing done'
+
+        # set parameters
+        self.kwargs = kwargs
+
+        params = self._get_param_names()
+        for name in params:
+           setattr(self, name, locals()[name])
+
+    def _transform(self, X):
+        """X in this case is the filename"""
+        params = self.get_params() | self.kwargs
+        raw = mne.io.read_raw(fname=X, **params)
+        return raw
+
+
+class FilterStep(BaseStep):
+  def __init__(self, l_freq, h_freq, picks=None, filter_length='auto',
+               l_trans_bandwidth='auto', h_trans_bandwidth='auto',
+               n_jobs=None, method='fir', iir_params=None, phase='zero',
+               fir_window='hamming', fir_design='firwin',
+               skip_by_annotation=('edge', 'bad_acq_skip'),
+               pad='reflect_limited', verbose=None):
+      self.type_in = mne.io.BaseRaw, 'Any MNE object that implements .filter'
+      self.type_out = mne.io.BaseRaw, ''
+
+      params = self._get_param_names()
+      for name in params:
+          setattr(self, name, locals()[name])
+
+  def _transform(self, raw):
+      return raw.filter(**self.get_params())
+
+
+filename = 'Z:/fastreplay-MEG-bids/sub-24/meg/sub-24_task-main_split-02_meg.fif'
+
+pipeline = DataPipeline(steps=[
+  ('load raw', LoadRaw()),
+  ('filter', FilterStep(l_freq=1.0, h_freq=40.0)),
+], verbose=True)
+pipeline.check_steps()
+pipeline.set_param(n_jobs=2, verbose='INFO', x23=2)
+
+# pipeline.transform(filename)
