@@ -9,7 +9,98 @@ import logging
 import mne
 import numpy as np
 import matplotlib.pyplot as plt
+import warnings
+from .constants import idx_mag, idx_grad
 from autoreject import AutoReject, get_rejection_threshold, read_auto_reject
+
+
+def rescale_meg_transform_outlier(arr):
+    """
+    same as rescale_meg, but also removes all values that are above [-1, 1]
+    and rescales them to smaller values
+    """
+
+    arr = rescale_meg(arr)
+
+    arr[arr < -1] *= 1e-2
+    arr[arr > 1] *= 1e-2
+    return arr
+
+
+def rescale_meg(arr):
+    """
+    this tries to statically re-scale the values from Tesla to Nano-Tesla,
+    such that most sensor values are between -1 and 1
+
+    If possible, individual scaling is applied to magnetometers and
+    gradiometers as both sensor types have a different sensitivity and scaling.
+
+    Basically a histogram normalization between the two sensor types
+
+    gradiometers  = *1e10
+    magnetometers = *2e11
+    """
+    assert len(set(arr.shape) & set([306, 204, 102]))>0, f'Probably not the right amount of channels? {arr.shape=}'
+    # some sanity check, if these
+    if arr.min() < -1e-6 or arr.max() > 1e-6:
+        warnings.warn(
+            "arr min/max are not in MEG scale, no rescaling applied: {arr.min()} / {arr.max()}"
+        )
+        raise Exception(
+            "arr min/max are not in MEG scale, no rescaling applied: {arr.min()} / {arr.max()}"
+        )
+    arr = np.array(arr)
+    grad_scale = 1e10
+    mag_scale = 2e11
+
+    # reshape to 3d to make indexing uniform for all types
+    # will be put in its original shape later
+    orig_shape = arr.shape
+    arr = np.atleast_3d(arr)
+
+    # heuristic to find which dimension is likely the sensor dimension
+    for meg_type in [306, 204, 102]:  # mag+grad or grad or mag
+        dims = [d for d, size in enumerate(arr.shape) if size % meg_type == 0]
+        # how many copies do we have of the sensors?
+        stacks = [
+            size // meg_type for d, size in enumerate(arr.shape) if size % meg_type == 0
+        ]
+        if len(dims) > 0:
+            break
+
+    if len(dims) != 1:
+        warnings.warn(
+            f"Several or no matching dimensions found for sensor dimension: {arr.shape}"
+            " will simply reshape everything with grad_scale."
+        )
+        raise Exception(
+            f"Several or no matching dimensions found for sensor dimension: {arr.shape}"
+            " will simply reshape everything with grad_scale."
+        )
+        return arr.reshape(*orig_shape) * grad_scale
+    sensor_dim = dims[0]
+    n_stack = stacks[0]
+
+    if meg_type == 306:
+        slicer_grad = [slice(None) for _ in range(3)]
+        slicer_grad[sensor_dim] = np.hstack(
+            [(i * meg_type) + idx_grad for i in range(n_stack)]
+        )
+        arr[tuple(slicer_grad)] *= grad_scale
+        slicer_mag = [slice(None) for _ in range(3)]
+        slicer_mag[sensor_dim] = np.hstack(
+            [(i * meg_type) + idx_mag for i in range(n_stack)]
+        )
+        arr[tuple(slicer_mag)] *= mag_scale
+
+    if meg_type == 204:
+        arr *= grad_scale
+
+    if meg_type == 102:
+        arr *= mag_scale
+
+    return arr.reshape(*orig_shape)
+
 
 def sanity_check_ECG(raw, channels=["BIO001", "BIO002", "BIO003"]):
     """
