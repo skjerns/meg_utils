@@ -1,0 +1,12 @@
+autoreject
+joblib
+matplotlib
+mne
+natsort
+numpy
+pandas
+pyEDFlib
+scikit_learn
+scipy
+seaborn
+tqdm
