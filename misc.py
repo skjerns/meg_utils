@@ -9,6 +9,18 @@ import warnings
 import mne
 import hashlib
 import numpy as np
+import json
+
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
 
 
 def choose_file(default_dir=None, default_file=None, exts='txt',
@@ -156,6 +168,12 @@ def hash_array(arr, length=8, dtype=np.int64):
     arr = arr.astype(dtype)
     return hashlib.sha1(arr.flatten("C")).hexdigest()[:length]
 
+def hash_md5(input_string, length=8):
+    """make a persistent md5 hash from a string"""
+    # Convert input string to bytes
+    input_bytes = input_string.encode('utf-8')
+    md5_hash = hashlib.md5(input_bytes).hexdigest()
+    return md5_hash[:length]
 
 def get_ch_neighbours(ch_name, n=9, return_idx=False,
                       layout_name='Vectorview-all', plot=False):
@@ -183,8 +201,10 @@ def get_ch_neighbours(ch_name, n=9, return_idx=False,
     return sorted([ch_as_in_raw.index(ch) for ch in chs_out]) if return_idx else chs_out
 
 
-def lowpriority():
-    """ Set the priority of the process to below-normal."""
+def low_priority():
+    """ Set the priority of the process to below-normal (cross platform).
+
+    subprocesses will inherit the niceness. prevents hogging your CPU"""
 
     import sys
     try:
@@ -206,4 +226,4 @@ def lowpriority():
     else:
         import os
 
-        os.nice(1)
+        os.nice(5)

@@ -4,6 +4,7 @@ Created on Mon Oct 21 10:18:57 2024
 
 @author: Simon Kern (@skjerns)
 """
+import os
 import mne
 import matplotlib.pyplot as plt
 import numpy as np
@@ -280,8 +281,8 @@ def make_fig(
     bottom_plots=2,
     no_ticks=False,
     suptitle="",
-    xlabel="Lag in ms",
-    ylabel="Sequenceness",
+    xlabel="Timepoint",
+    ylabel="",
     figsize=None,
     despine=True,
 ):
@@ -354,6 +355,55 @@ def make_fig(
         sns.despine(fig)
     return fig, axs, *axs_bottom
 
+def savefig(fig, file, tight=True, despine=True, **kwargs):
+    """
+    Save a Matplotlib figure to a specified file with optional adjustments.
+
+    This function refreshes the figure, applies optional layout adjustments
+    (tight layout and despine), and saves the figure to the specified file.
+    It ensures the output directory exists and appends a default file extension
+    if none is provided.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The Matplotlib figure to save.
+    file : str
+        The file path where the figure will be saved. If the file does not
+        have an extension, '.png' will be appended.
+    tight : bool, optional
+        If True, applies `fig.tight_layout()` to adjust the layout of the figure
+        before saving. Default is True.
+    despine : bool, optional
+        If True, removes the top and right spines from the figure using
+        `sns.despine()`. Default is True.
+    **kwargs : dict, optional
+        Additional keyword arguments passed to `fig.savefig()`.
+
+    Notes
+    -----
+    - The function ensures the output directory exists by creating it if necessary.
+    - Supported file extensions include 'png', 'jpg', 'svg', and 'eps'. If no
+      extension is provided, '.png' is used by default.
+    """
+    fig.canvas.draw_idle()   # Refresh only fig1
+    fig.canvas.flush_events()  # Process GUI events for fig1
+    if despine:
+        sns.despine(fig)
+    if tight:
+        fig.tight_layout()
+    fig.canvas.draw_idle()   # Refresh only fig1
+    fig.canvas.flush_events()  # Process GUI events for fig1
+    fig.show()
+
+    # Ensure the output directory exists
+    out_dir = os.path.dirname(file)
+    os.makedirs(out_dir, exist_ok=True)
+    if not file.endswith(('png', 'jpg', 'svg', 'eps')):
+        file = file + '.png'
+    fig.savefig(file, **kwargs)
+
+
 
 def normalize_lims(axs, which='both'):
     """for all axes in axs: set function to min/max of all axs
@@ -375,3 +425,48 @@ def normalize_lims(axs, which='both'):
         ymax = max([x[1] for x in ylims])
         for ax in axs:
             getattr(ax, f'set_{w}lim')([ymin, ymax])
+
+
+def highlight_cells(mask, ax, color='r', linewidth=1, linestyle='solid'):
+    """
+    Draws borders around the true entries of the mask array on a heatmap plot.
+
+    Parameters:
+    - mask (np.ndarray): A 2D binary mask array where True (or 1) entries indicate
+                         the cells that should be highlighted with a border.
+    - ax (matplotlib.axes.Axes): The axes on which the heatmap is plotted.
+    - color (str): Color of the border lines.
+    - linewidth (float): Width of the border lines.
+    - linestyle (str): Line style of the border lines.
+    """
+    # Ensure the mask is a 2D array
+    if len(mask.shape) != 2:
+        raise ValueError("Mask must be a 2D array.")
+
+    # Check if the mask dimensions match the plotted image dimensions
+    image_shape = ax.images[0].get_array().shape
+    if mask.shape != image_shape:
+        raise ValueError(f"Mask dimensions {mask.shape} do not match the plotted image dimensions {image_shape}.")
+
+    # Function to check if a cell is outside the mask or out of bounds
+    def is_outside_mask(i, j, mask):
+        if i < 0 or i >= mask.shape[0] or j < 0 or j >= mask.shape[1]:
+            return True
+        return not mask[i, j]
+
+    # Loop through each cell in the mask to draw borders around masked regions
+    for i in range(mask.shape[0]):
+        for j in range(mask.shape[1]):
+            if mask[i, j]:
+                # Draw top border if the cell above is outside the mask
+                if is_outside_mask(i - 1, j, mask):
+                    ax.plot([j - 0.5, j + 0.5], [i - 0.5, i - 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+                # Draw bottom border if the cell below is outside the mask
+                if is_outside_mask(i + 1, j, mask):
+                    ax.plot([j - 0.5, j + 0.5], [i + 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+                # Draw left border if the cell to the left is outside the mask
+                if is_outside_mask(i, j - 1, mask):
+                    ax.plot([j - 0.5, j - 0.5], [i - 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+                # Draw right border if the cell to the right is outside the mask
+                if is_outside_mask(i, j + 1, mask):
+                    ax.plot([j + 0.5, j + 0.5], [i - 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
