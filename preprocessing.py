@@ -27,6 +27,33 @@ def rescale_meg_transform_outlier(arr):
     return arr
 
 
+def load_events(file, event_ids=None):
+    """retrieve event markers in chronological order from a mne readable file
+    Parameters
+    ----------
+    file : str
+        filepath of raw file, e.g. .fif or .edf.
+    event_ids : TYPE, optional
+        DESCRIPTION. The default is None.
+
+    Returns
+    -------
+    np.ndarray
+        mne.events array (n,3) -> (time, duration, event_id).
+
+    """
+
+    raw = mne.io.read_raw(file)
+    min_duration = 3/raw.info['sfreq'] # our triggers are ~5ms long
+    events = mne.find_events(raw, min_duration=min_duration,
+                                 consecutive=False, verbose='WARNING')
+    if event_ids is None:
+        event_ids = np.unique(events[:,2])
+    event_mask = [e in event_ids for e in events[:,2]]
+
+    return events[event_mask,:]
+
+
 def rescale_meg(arr):
     """
     this tries to statically re-scale the values from Tesla to Nano-Tesla,

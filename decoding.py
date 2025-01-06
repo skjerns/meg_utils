@@ -25,6 +25,23 @@ except ImportError:
     from misc import NumpyEncoder
 
 
+def is_json_serializable(obj):
+    """
+    Check if an object is JSON serializable.
+
+    Args:
+        obj: The object to check.
+
+    Returns:
+        bool: True if the object is JSON serializable, False otherwise.
+    """
+    try:
+        json.dumps(obj, cls=NumpyEncoder)
+        return True
+    except (TypeError, OverflowError):
+        return False
+
+
 def save_clf(clf, filename, save_json=True, metadata=None):
     """
     Saves a scikit-learn classifier to a compressed pickle file, with an optional
@@ -88,6 +105,7 @@ def save_clf(clf, filename, save_json=True, metadata=None):
 
         # Get classifier parameters
         params = clf.get_params()
+        params = {key:(val if is_json_serializable(val) else str(val)) for key, val in params.items()}
 
         # Retrieve the code where `save_clf` was called
         try:
