@@ -9,13 +9,16 @@ import joblib
 import os
 from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import VotingClassifier
 from tqdm import tqdm
 import warnings
 import inspect
 import numpy as np
 import pandas as pd
 import json
-from sklearn.base import BaseEstimator, clone, is_classifier
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import clone, is_classifier
+
 
 try:
     from . import misc
@@ -321,6 +324,126 @@ def get_channel_importances(data_x, data_y, n_folds=5,
     return accs, np.mean(rankings, 0)
 
 
+class TimeEnsembleVoting(VotingClassifier):
+    """
+    TimeVotingClassifier trains one clone of a base estimator on each time slice
+    of a 3D input (n_samples, n_features, n_times). It stores all these estimators
+    in a VotingClassifier to leverage its predict/predict_proba functionality.
+
+    Parameters
+    ----------
+    base_estimator : estimator object
+        The classifier to clone and fit on each time point.
+
+    voting : str, {'hard', 'soft'}, default='hard'
+        If 'hard', uses predicted class labels for majority rule voting.
+        If 'soft', predicts the class label based on the argmax of
+        the sums of the predicted probabilities.
+
+    weights : array-like of shape (n_estimators,), default=None
+        Sequence of weights (float values) to weight the occurrences of predicted class
+        labels (hard voting) or class probabilities before averaging (soft voting).
+
+    n_jobs : int, default=None
+        Number of jobs to run in parallel for fit. None means 1 unless in
+        a joblib.parallel_backend context. -1 means using all processors.
+
+    flatten_transform : bool, default=True
+        Parameter inherited from VotingClassifier. Ignored unless voting='soft'.
+    """
+
+    def __init__(
+        self,
+        base_estimator,
+        voting='hard',
+        weights=None,
+        n_jobs=None,
+        flatten_transform=True
+    ):
+        self.base_estimator = base_estimator
+        super().__init__(
+            estimators=[(f'{base_estimator}', self.base_estimator), ],
+            voting=voting,
+            weights=weights,
+            n_jobs=n_jobs,
+            flatten_transform=flatten_transform
+        )
+
+    def fit(self, X, y, *, sample_weight=None, **fit_params):
+        """Get common fit operations."""
+        # get all the imports that the votingclassifier also uses
+        from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
+        from sklearn.ensemble._voting import process_routing, Bunch
+        from sklearn.ensemble._voting import _fit_single_estimator
+        if len(X.shape) != 3:
+            raise ValueError(
+                "X should be of shape (n_samples, n_features, n_times). "
+                f"Got {X.shape}."
+            )
+
+        n_samples, n_features, n_times = X.shape
+
+        # part of VotingClassifier
+        self.le_ = LabelEncoder().fit(y)
+        self.classes_ = self.le_.classes_
+        transformed_y = self.le_.transform(y)
+
+        if sample_weight is not None:
+            fit_params["sample_weight"] = sample_weight
+
+        names, clfs = self._validate_estimators()
+        assert len(clfs)==1,\
+            'only one base_estimator should be supplied to TimeEnsembleVoting'
+
+        if self.weights is not None and len(self.weights) != len(self.estimators):
+            raise ValueError(
+                "Number of `estimators` and weights must be equal; got"
+                f" {len(self.weights)} weights, {len(self.estimators)} estimators"
+            )
+
+        # create copies of the clf
+        clfs = clfs * n_times
+        names = names * n_times
+
+        if _routing_enabled():
+            routed_params = process_routing(self, "fit", **fit_params)
+        else:
+            routed_params = Bunch()
+            for name in names:
+                routed_params[name] = Bunch(fit={})
+                if "sample_weight" in fit_params:
+                    routed_params[name].fit["sample_weight"] = fit_params[
+                        "sample_weight"
+                    ]
+
+        self.estimators_ = Parallel(n_jobs=self.n_jobs)(
+            delayed(_fit_single_estimator)(
+                clone(clf),
+                X[:,:,idx],
+                transformed_y,
+                fit_params=routed_params[name]["fit"],
+                message_clsname="Voting",
+                message=self._log_message(name, idx + 1, len(clfs)),
+            )
+            for idx, (name, clf) in enumerate(zip(names, clfs))
+            if clf != "drop"
+        )
+
+        self.named_estimators_ = Bunch()
+
+        # Uses 'drop' as placeholder for dropped estimators
+        est_iter = iter(self.estimators_)
+        for name, est in self.estimators:
+            current_est = est if est == "drop" else next(est_iter)
+            self.named_estimators_[name] = current_est
+
+            if hasattr(current_est, "feature_names_in_"):
+                self.feature_names_in_ = current_est.feature_names_in_
+
+        return self
+
+
+
 class LogisticRegressionOvaNegX(LogisticRegression):
     """one vs all logistic regression classifier including negative examples.
 
@@ -346,7 +469,7 @@ class LogisticRegressionOvaNegX(LogisticRegression):
                 C=C,
                 solver=solver,
                 max_iter=max_iter,
-                multi_class="ovr",
+                # multi_class="ovr",
             )
         assert is_classifier(
             base_clf
@@ -363,7 +486,7 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             C=C,
             solver=solver,
             max_iter=max_iter,
-            multi_class="ovr",
+            # multi_class="ovr",
         )
 
     def fit(self, X, y, neg_x=None, neg_x_ratio=None):
@@ -412,10 +535,13 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             proba.append(p)
         return np.array(proba).T
 
-
+#%% main
+import stimer
 if __name__=='__main__':
     data_x = np.random.rand(100, 306, 101)
     data_y = np.repeat(np.arange(10), 10)
-    clf = LogisticRegressionOvaNegX(C=4.8)
+    clf_base = LogisticRegressionOvaNegX(C=4.8)
 
-    cross_validation_across_time(data_x, data_y, clf)
+    # cross_validation_across_time(data_x, data_y, clf)
+    clf = TimeEnsembleVoting(clf_base, n_jobs=-1)
+    clf.fit(data_x, data_y)
