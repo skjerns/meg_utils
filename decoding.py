@@ -18,7 +18,9 @@ import pandas as pd
 import json
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.base import clone, is_classifier
-
+from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
+from sklearn.ensemble._voting import process_routing, Bunch
+from sklearn.ensemble._voting import _fit_single_estimator
 
 try:
     from . import misc
@@ -372,9 +374,7 @@ class TimeEnsembleVoting(VotingClassifier):
     def fit(self, X, y, *, sample_weight=None, **fit_params):
         """Get common fit operations."""
         # get all the imports that the votingclassifier also uses
-        from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
-        from sklearn.ensemble._voting import process_routing, Bunch
-        from sklearn.ensemble._voting import _fit_single_estimator
+
         if len(X.shape) != 3:
             raise ValueError(
                 "X should be of shape (n_samples, n_features, n_times). "
