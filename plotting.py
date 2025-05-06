@@ -12,8 +12,22 @@ import pandas as pd
 import seaborn as sns
 import warnings
 
+
+def _infer_layout(n_values):
+    louts_dir = f'{mne.__path__[0]}/channels/data/layouts/'
+    louts = [f for f in os.listdir(louts_dir) if f.endswith('.lout')]
+
+    for lout in louts:
+        layout = mne.channels.read_layout(os.path.join(louts_dir, lout))
+        if len(layout.pos) == n_values:
+            print(f'assuming layout = {lout}')
+            return layout
+    raise ValueError(f'No layout found with {n_values} positions in {louts}')
+
 def plot_sensors(
     values,
+    layout='auto',
+    positions=None,
     title="Sensors active",
     mode="size",
     color=None,
@@ -39,6 +53,11 @@ def plot_sensors(
           length equal to the number of sensors.
         - For `mode="multi_binary"` and `mode="percentage"`, `values` should be a 2D
           array where each row represents a different class or condition.
+
+    layout: str
+        name of the layout found int /mne/channels/data/layouts/*.lout
+        e.g. Vectorview-all. If 'auto' will try to match the number of
+        values to a layout that has the corresponding number of channels
 
     title : str, optional
         The title of the plot. Default is "Sensors active".
@@ -116,8 +135,14 @@ def plot_sensors(
     >>> percentage_values = np.random.randint(0, 2, size=(100, 306))
     >>> plot_sensors(percentage_values, mode="percentage")
     """
-    layout = mne.channels.read_layout("Vectorview-all")
-    positions = layout.pos[:, :2].T
+    if positions is None and layout:
+        if layout=='auto':
+            layout = _infer_layout(len(values))
+        else:
+            layout = mne.channels.read_layout(layout)
+        positions = layout.pos[:, :2].T
+    elif positions is not None and layout not in [None, False]:
+        warnings.warn(f'positions has been provided, {layout=} will be ignored')
 
     def jitter(values):
         values = np.array(values)
@@ -470,3 +495,187 @@ def highlight_cells(mask, ax, color='r', linewidth=1, linestyle='solid'):
                 # Draw right border if the cell to the right is outside the mask
                 if is_outside_mask(i, j + 1, mask):
                     ax.plot([j + 0.5, j + 0.5], [i - 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+
+
+"""
+Complete “one-liner” visualiser for alpha-band travelling waves in MEG.
+
+Just call
+
+    show_alpha_dynamics(raw)
+
+where `raw` is an mne.io.Raw object that has already been
+cleaned (Maxwell filter & ICA, etc.).  Nothing else is needed.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import mne
+from scipy.signal import hilbert
+from scipy.spatial.distance import cdist
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper 1 ── automatic peak-alpha detection
+# ─────────────────────────────────────────────────────────────────────────────
+def _find_alpha_peak(raw, fmin: float = 7., fmax: float = 14.) -> float:
+    """Return the frequency (Hz) of the largest PSD peak in the alpha band."""
+    psd, freqs = mne.time_frequency.psd_welch(
+        raw, fmin=fmin, fmax=fmax, picks="meg", n_fft=2048,
+        average="mean", verbose=False
+    )
+    peak_idx = np.argmax(psd.mean(0))
+    return freqs[peak_idx]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper 2 ── parameter extraction  (returns phase, magnitude, speed, direction)
+# ─────────────────────────────────────────────────────────────────────────────
+def _get_alpha_params(
+        raw,
+        alpha_peak: float,
+        bw_hz: float = 2.,
+        z_thr: float = 2.,
+        k_neigh: int = 10):
+    """
+    Internal version of get_alpha_params that *also* returns the direction
+    unit-vector required for arrow plotting.
+    """
+    f_lo, f_hi = alpha_peak - bw_hz, alpha_peak + bw_hz
+    alpha = raw.copy().filter(f_lo, f_hi, fir_design='firwin', phase='zero-double')
+
+    picks = mne.pick_types(alpha.info, meg=True, exclude=[])
+    data  = alpha.get_data(picks=picks)                    # (n_sensors, n_times)
+    sfreq = alpha.info['sfreq']
+
+    analytic   = hilbert(data, axis=1)
+    phase      = np.angle(analytic)
+    magnitude  = np.abs(analytic)
+
+    # -------- alpha-burst frames --------
+    env_global = magnitude.mean(0)
+    z_env      = (env_global - env_global.mean()) / env_global.std()
+    burst_mask = z_env > z_thr
+    phase_b    = np.unwrap(phase[:, burst_mask], axis=1)
+    mag_b      = magnitude[:, burst_mask]
+
+    if phase_b.shape[1] < 50:
+        print("⚠️ Few alpha-burst samples – results may be noisy.")
+
+    omega = np.diff(phase_b, axis=1) * sfreq            # angular frequency (rad/s)
+    phase_b = phase_b[:, 1:]                            # align with omega
+
+    # -------- geometry --------
+    chs = [alpha.info['chs'][p] for p in picks]
+    pos = np.array([c['loc'][:3] for c in chs])         # (n_sensors,3) metres
+    dist = cdist(pos, pos)
+    n_sensors, n_t = phase_b.shape
+
+    spd_sum  = np.zeros(n_sensors)
+    spd_cnt  = np.zeros(n_sensors)
+    grad_sum = np.zeros((n_sensors, 3))
+
+    for t in range(n_t):
+        ω = np.nanmedian(omega[:, t])
+        if not np.isfinite(ω) or np.abs(ω) < 1e-3:
+            continue
+        φ = phase_b[:, t]
+
+        for i in range(n_sensors):
+            neigh = np.argsort(dist[i])[1:k_neigh+1]
+            X = pos[neigh] - pos[i]
+            y = φ[neigh]   - φ[i]
+            g, *_ = np.linalg.lstsq(X, y, rcond=None)
+            g_norm = np.linalg.norm(g)
+            if g_norm == 0:
+                continue
+            v = np.abs(ω) / g_norm * 100                # → cm/s
+            spd_sum[i]  += v
+            spd_cnt[i]  += 1
+            grad_sum[i] += g
+
+    speed_cm = spd_sum / np.maximum(spd_cnt, 1)
+    speed_cm[spd_cnt == 0] = np.nan
+
+    grad_mean = grad_sum / np.maximum(spd_cnt[:, None], 1)
+    norm      = np.linalg.norm(grad_mean, axis=1, keepdims=True)
+    dir_unit  = grad_mean / np.where(norm == 0, 1, norm)
+
+    phase_mean = np.angle(np.mean(np.exp(1j*phase_b), axis=1))
+    mag_mean   = mag_b.mean(axis=1)
+
+    return phase_mean, mag_mean, speed_cm, dir_unit, picks
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN VISUALISER
+# ─────────────────────────────────────────────────────────────────────────────
+def show_alpha_dynamics(raw):
+    """
+    Visualise three maps in one figure:
+        1. Mean alpha magnitude per sensor
+        2. Mean alpha phase per sensor (circular)
+        3. Propagation speed (cm/s) + direction arrows
+
+    Input
+    -----
+    raw : mne.io.Raw
+        Pre-processed continuous MEG data.
+    """
+    # ── 1. auto-detect peak alpha ───────────────────────────────────────────
+    alpha_peak = 10.9
+    print(f"Detected individual alpha peak: {alpha_peak:.2f} Hz")
+
+    # ── 2. compute parameters ───────────────────────────────────────────────
+    ph, mag, spd, direction, picks = _get_alpha_params(raw, alpha_peak)
+
+    # 2-D sensor coordinates for topomaps
+    xy = np.array([raw.info['chs'][p]['loc'][:2] for p in picks])
+
+    # ── 3. plotting ─────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+    fig.suptitle("Alpha-band cortical dynamics", fontsize=14)
+
+    # (a) Magnitude
+    im0, _ = mne.viz.plot_topomap(
+        mag, xy, axes=axes[0], show=False, cmap="viridis",
+        vmin=np.nanpercentile(mag, 5), vmax=np.nanpercentile(mag, 95)
+    )
+    plt.colorbar(im0, ax=axes[0], shrink=.7, label="µV (a.u.)")
+    axes[0].set_title("Alpha magnitude")
+
+    # (b) Phase
+    im1, _ = mne.viz.plot_topomap(
+        ph, xy, axes=axes[1], show=False, cmap="twilight",
+    )
+    cbar = plt.colorbar(
+        im1, ax=axes[1], shrink=.7,
+        ticks=[-np.pi, -np.pi/2, 0, np.pi/2, np.pi]
+    )
+    cbar.ax.set_yticklabels(["-π", "-π/2", "0", "π/2", "π"])
+    axes[1].set_title("Alpha phase (rad)")
+
+    # (c) Speed + direction
+    im2, _ = mne.viz.plot_topomap(
+        spd, xy, axes=axes[2], show=False, cmap="magma",
+        vmin=np.nanpercentile(spd, 5), vmax=np.nanpercentile(spd, 95)
+    )
+    plt.colorbar(im2, ax=axes[2], shrink=.7, label="cm / s")
+    axes[2].set_title("Propagation speed & direction")
+
+    # arrows
+    vec_scale = .06  # scaling for arrow length
+    for (x, y), d in zip(xy, direction):
+        if np.any(np.isnan(d)):
+            continue
+        axes[2].arrow(
+            x, y, -d[0]*vec_scale, -d[1]*vec_scale,  # minus sign: wave front
+            head_width=.005, head_length=.008,
+            fc="k", ec="k", lw=.8, length_includes_head=True
+        )
+
+    for ax in axes:
+        ax.set_axis_off()
+
+    plt.tight_layout()
+    plt.show()
