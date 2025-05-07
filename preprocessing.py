@@ -248,32 +248,3 @@ def repair_epochs_autoreject(raw, epochs, ar_file, picks="meg"):
     logging.info(f"saved repaired epochs to {epochs_repaired_file}")
 
     return reject_log, epochs_repaired
-
-
-def resample(array, o_sfreq, t_sfreq, n_jobs=-1, verbose=False):
-    """
-    resample a signal using MNE resample functions
-    This automatically is optimized for EEG applying filters etc
-
-    1D : (timestep)
-    2D : (channels, timestep)
-    3D : (epochs, channels, timestep)
-
-    :param array:     a 1D/2D/3D data array
-    :param o_sfreq: the original sampling frequency
-    :param t_sfreq: the target sampling frequency
-    :returns: the resampled signal
-    """
-    if o_sfreq==t_sfreq: return array
-    array = np.atleast_3d(array)
-
-    if array.ndim>3:
-        raise ValueError(f'Too many dimensions in array: {array.ndim}')
-
-    ch_names=['ch{}'.format(i) for i in range(array.shape[1])]
-    info = mne.create_info(ch_names=ch_names, sfreq=o_sfreq, ch_types=['eeg']*array.shape[1])
-    raw_mne = mne.EpochsArray(array, info, tmin=0, verbose=verbose)
-
-    resampled = raw_mne.resample(t_sfreq, n_jobs=n_jobs, verbose=verbose)
-    new_raw = resampled.get_data().squeeze()
-    return new_raw.astype(array.dtype, copy=False)
