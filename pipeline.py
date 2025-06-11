@@ -1,8 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Module implementing a data processing pipeline for MNE (MEG/EEG) data using scikit-learn conventions.
-
 Created on Wed Nov 20 10:31:14 2024
+
+Module implementing a data processing pipeline for MNE (MEG/EEG) data using
+scikit-learn conventions.
+
+example usage
+
+    filename = 'Z:/fastreplay-MEG-bids/sub-24/meg/sub-24_task-main_split-02_meg.fif'
+
+    x = LoadRawStep()
+
+    pipeline = DataPipeline(steps=[
+        ('load raw', LoadRawStep()),
+        ('filter', FilterStep(l_freq=1.0, h_freq=40.0)),
+    ], verbose=True)
+    pipeline.check_steps()
+    pipeline.set_params_all(n_jobs=2, verbose='INFO')
+
 
 @author: Simon
 """
@@ -156,7 +171,7 @@ class DataPipeline(Pipeline):
                 )
 
 
-class BaseStep(TransformerMixin, BaseEstimator):
+class _BaseStep(TransformerMixin, BaseEstimator):
     """
     Base class for all processing steps in the pipeline.
 
@@ -227,7 +242,7 @@ class BaseStep(TransformerMixin, BaseEstimator):
         return result
 
 
-class CustomStep(BaseStep):
+class CustomStep(_BaseStep):
     """
     A custom processing step that applies a user-defined function.
 
@@ -270,7 +285,7 @@ class CustomStep(BaseStep):
         return res
 
 
-class LoadRawStep(BaseStep):
+class LoadRawStep(_BaseStep):
     """
     Load a raw data file from disk.
 
@@ -330,7 +345,7 @@ class LoadRawStep(BaseStep):
         return raw
 
 
-class FilterStep(BaseStep):
+class FilterStep(_BaseStep):
     """
     Apply a band-pass filter to the data using MNE's filtering functions.
 
@@ -422,7 +437,7 @@ class FilterStep(BaseStep):
         return obj.filter(**self.get_params())
 
 
-class ResampleStep(BaseStep):
+class ResampleStep(_BaseStep):
     """
     Resample the data to a new sampling frequency.
 
@@ -515,7 +530,106 @@ class ResampleStep(BaseStep):
         return raw_resampled
 
 
-class EpochingStep(BaseStep):
+class CropStep(_BaseStep):
+    """
+    Crop a raw MNE object between two event markers.
+
+    Parameters
+    ----------
+    id_start : int
+        The event ID marking the start of the segment to crop.
+    id_stop : int
+        The event ID marking the end of the segment to crop.
+    events : ndarray | None, optional
+        Precomputed events array. If None, events will be detected using `mne.find_events`.
+    min_length_sanity : float, optional
+        Minimum length (in seconds) for the cropped segment. Default is infinity.
+    verbose : bool | None, optional
+        Verbosity level.
+
+    Attributes
+    ----------
+    type_in : tuple
+        Expected input types and a description ('Any MNE Raw object to be cropped').
+    type_out : tuple
+        Expected output types and a description ('Raw object cropped to marker positions').
+    """
+
+    def __init__(self, id_start, id_stop, events=None, min_length_sanity=0, verbose=None):
+        self.type_in = (mne.io.BaseRaw,), 'Any MNE Raw object to be cropped'
+        self.type_out = (mne.io.BaseRaw,), 'Raw object cropped to marker positions'
+
+        self.id_start = id_start
+        self.id_stop = id_stop
+        self.events = events
+        self.min_length_sanity = min_length_sanity
+        self.verbose = verbose
+
+    def _transform(self, raw):
+        """
+        Crop the raw data between two event markers.
+
+        Parameters
+        ----------
+        raw : mne.io.BaseRaw
+            The raw data object to crop.
+
+        Returns
+        -------
+        cropped_raw : mne.io.BaseRaw
+            The cropped raw data object.
+
+        Raises
+        ------
+        ValueError
+            If the required events are not found or if the cropped segment is too short.
+        """
+        # Find events if not provided
+        if self.events is None:
+            events = mne.find_events(raw, verbose=self.verbose)
+        else:
+            events = self.events
+            # Adjust for first_samp if necessary
+            events[:, 0] += raw.first_samp
+
+        # Extract start and stop events
+        start_events = events[events[:, 2] == self.id_start]
+        stop_events = events[events[:, 2] == self.id_stop]
+
+        if len(start_events) != 1 or len(stop_events) != 1:
+            raise ValueError(
+                f"Expected exactly one start event (ID {self.id_start}) and one stop event (ID {self.id_stop}), "
+                f"but found {len(start_events)} start and {len(stop_events)} stop events."
+            )
+
+        # Get the sample indices for cropping
+        start_sample = start_events[0, 0]
+        stop_sample = stop_events[0, 0]
+
+        # Ensure the segment length is valid
+        segment_length = (stop_sample - start_sample) / raw.info['sfreq']
+        if segment_length < self.min_length_sanity:
+            raise ValueError(
+                f"Cropped segment length ({segment_length:.2f} s) is shorter than the minimum allowed length "
+                f"({self.min_length_sanity:.2f} s)."
+            )
+
+        # Crop the raw data
+        raw.crop(
+            tmin=(start_sample - raw.first_samp) / raw.info['sfreq'],
+            tmax=(stop_sample - raw.first_samp) / raw.info['sfreq']
+        )
+
+        if self.verbose:
+            logging.info(
+                f"Cropped raw data from {start_sample} to {stop_sample} samples "
+                f"({segment_length:.2f} seconds)."
+            )
+
+        return raw
+
+
+class EpochingStep(_BaseStep):
     """
     Create epochs from the raw data.
 
@@ -664,7 +778,7 @@ class EpochingStep(BaseStep):
         return epochs
 
 
-class NormalizationStep(BaseStep):
+class NormalizationStep(_BaseStep):
     """
     Apply a normalization function to the data.
 
@@ -741,7 +855,7 @@ class NormalizationStep(BaseStep):
         return obj_normalized
 
 
-class ToArrayStep(BaseStep):
+class ToArrayStep(_BaseStep):
     """
     Convert MNE objects to NumPy arrays.
 
@@ -806,7 +920,7 @@ class ToArrayStep(BaseStep):
         return tuple(data)
 
 
-class ICAStep(BaseStep):
+class ICAStep(_BaseStep):
     def __init__(self, n_components=None, method='fastica', random_state=97, max_iter='auto', decim=3, reject_by_annotation=True, tstep=0.02, verbose=None):
         raise Exception('Step is from chatgpt - check first')
         self.type_in = mne.io.BaseRaw, 'Any MNE Raw object for ICA'
@@ -836,7 +950,7 @@ class ICAStep(BaseStep):
         return raw_corrected
 
 
-class StratifyStep(BaseStep):
+class StratifyStep(_BaseStep):
     def __init__(self, strategy='undersample', random_state=None, verbose=None):
         warnings.warn('Step is from chatgpt - check first')
         self.type_in = (mne.epochs.BaseEpochs,

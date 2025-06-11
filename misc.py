@@ -4,7 +4,10 @@ Created on Mon Oct 21 10:21:26 2024
 
 @author: Simon Kern (@skjerns)
 """
+import os
+from pathlib import Path
 from collections import namedtuple
+from natsort import natsort_key
 import warnings
 import mne
 import hashlib
@@ -22,6 +25,76 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
 
+def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
+               subfolders=None, only_folders=False, max_results=None,
+               case_sensitive=False):
+    """
+    will make a list of all files with extention exts (list)
+    found in the path and possibly all subfolders and return
+    a list of all files matching this pattern
+
+    :param path:  location to find the files
+    :type  path:  str
+    :param exts:  extension of the files (e.g. .jpg, .jpg or .png, png)
+                  Will be turned into a pattern internally
+    :type  exts:  list or str
+    :param pattern: A pattern that is supported by pathlib.Path,
+                  e.g. '*.txt', '**\rfc_*.clf'
+    :type:        str
+    :param fullpath:  give the filenames with path
+    :type  fullpath:  bool
+    :param subfolders
+    :param return_strings: return strings, else returns Path objects
+    :return:      list of file names
+    :type:        list of str
+    """
+    def insensitive_glob(pattern):
+        f = lambda c: '[%s%s]' % (c.lower(), c.upper()) if c.isalpha() else c
+        return ''.join(map(f, pattern))
+
+    if subfolders is not None:
+        import warnings
+        warnings.warn("`subfolders` is deprecated, use `recursive=` instead", DeprecationWarning)
+        recursive = subfolders
+
+    if isinstance(exts, str): exts = [exts]
+    if isinstance(patterns, str): patterns = [patterns]
+    assert isinstance(path, str), "path needs to be a str"
+    assert os.path.exists(path), 'Path {} does not exist'.format(path)
+    if patterns is None: patterns = []
+    if exts is None: exts = []
+
+    if patterns==[] and exts == []:
+        patterns = ['*']
+
+    for ext in exts:
+        ext = ext.replace('*', '')
+        pattern = '*' + ext
+        patterns.append(pattern.lower())
+
+    # if recursiveness is asked, prepend the double asterix to each pattern
+    if recursive: patterns = ['**/' + pattern for pattern in patterns]
+
+    # collect files for each pattern
+    files = []
+    fcount = 0
+    for pattern in patterns:
+        if not case_sensitive:
+            pattern = insensitive_glob(pattern)
+        for filename in Path(path).glob(pattern):
+            if filename.is_file() and filename not in files:
+                files.append(filename)
+                fcount += 1
+                if max_results is not None and max_results<=fcount:
+                    break
+
+    # turn path into relative or absolute paths
+    files = [file.relative_to(path) if relative else file.absolute() for file in files]
+    files = [os.path.join(file) for file in files]
+
+    files = set(files)  # filter duplicates
+    # by default: return strings instead of Path objects
+    return sorted(files, key=natsort_key)
 
 def choose_file(default_dir=None, default_file=None, exts='txt',
                 title='Choose file', mode='open', multiple=False):
