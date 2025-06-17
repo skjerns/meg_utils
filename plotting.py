@@ -4,6 +4,7 @@ Created on Mon Oct 21 10:18:57 2024
 
 @author: Simon Kern (@skjerns)
 """
+import os
 import mne
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,8 +12,22 @@ import pandas as pd
 import seaborn as sns
 import warnings
 
+
+def _infer_layout(n_values):
+    louts_dir = f'{mne.__path__[0]}/channels/data/layouts/'
+    louts = [f for f in os.listdir(louts_dir) if f.endswith('.lout')]
+
+    for lout in louts:
+        layout = mne.channels.read_layout(os.path.join(louts_dir, lout))
+        if len(layout.pos) == n_values:
+            print(f'assuming layout = {lout}')
+            return layout
+    raise ValueError(f'No layout found with {n_values} positions in {louts}')
+
 def plot_sensors(
     values,
+    layout='auto',
+    positions=None,
     title="Sensors active",
     mode="size",
     color=None,
@@ -39,17 +54,21 @@ def plot_sensors(
         - For `mode="multi_binary"` and `mode="percentage"`, `values` should be a 2D
           array where each row represents a different class or condition.
 
+    layout: str
+        name of the layout found int /mne/channels/data/layouts/*.lout
+        e.g. Vectorview-all. If 'auto' will try to match the number of
+        values to a layout that has the corresponding number of channels
+
     title : str, optional
         The title of the plot. Default is "Sensors active".
 
-    mode : {"size", "binary", "multi_binary", "percentage", "color"}, optional
+    mode : {"size", "binary", "multi_binary", "percentage"}, optional
         The visualization mode determining how the sensor data is represented:
 
         - `"size"`: Marker sizes are scaled according to the `values`.
         - `"binary"`: Sensors are displayed as active or inactive based on `values`.
         - `"multi_binary"`: Multiple binary classes are visualized with different colors.
         - `"percentage"`: Percentage of activations per sensor is visualized.
-        - `"color"`: make a color gradient of uniform sized circles
 
         Default is `"size"`.
 
@@ -71,7 +90,7 @@ def plot_sensors(
 
     cmap : str or matplotlib.colors.Colormap, optional
         The colormap to use for representing data values in `"size"` and
-        `"percentage"` or `"color"` modes. Default is `"Reds"`.
+        `"percentage"` modes. Default is `"Reds"`.
 
     **kwargs
         Additional keyword arguments passed to the underlying plotting functions.
@@ -116,8 +135,14 @@ def plot_sensors(
     >>> percentage_values = np.random.randint(0, 2, size=(100, 306))
     >>> plot_sensors(percentage_values, mode="percentage")
     """
-    layout = mne.channels.read_layout("Vectorview-all")
-    positions = layout.pos[:, :2].T
+    if positions is None and layout:
+        if layout=='auto':
+            layout = _infer_layout(len(values))
+        else:
+            layout = mne.channels.read_layout(layout)
+        positions = layout.pos[:, :2].T
+    elif positions is not None and layout not in [None, False]:
+        warnings.warn(f'positions has been provided, {layout=} will be ignored')
 
     def jitter(values):
         values = np.array(values)
@@ -141,17 +166,6 @@ def plot_sensors(
         plot = ax.scatter(
             *positions, s=sizes, c=values, vmin=vmin, vmax=vmax, cmap=cmap, alpha=0.75
         )
-
-    elif mode == 'color':
-        if vmin is None:
-            vmin = np.min(values)
-        if vmax is None:
-            vmax = np.max(values)
-        size = kwargs.get('size', 15)
-        plot = ax.scatter(
-            *positions, s=size, c=values, vmin=vmin, vmax=vmax, cmap=cmap
-        )
-
 
     elif mode == "binary":
         assert values.ndim == 1
@@ -292,8 +306,8 @@ def make_fig(
     bottom_plots=2,
     no_ticks=False,
     suptitle="",
-    xlabel="Lag in ms",
-    ylabel="Sequenceness",
+    xlabel="Timepoint",
+    ylabel="",
     figsize=None,
     despine=True,
 ):
@@ -366,6 +380,55 @@ def make_fig(
         sns.despine(fig)
     return fig, axs, *axs_bottom
 
+def savefig(fig, file, tight=True, despine=True, **kwargs):
+    """
+    Save a Matplotlib figure to a specified file with optional adjustments.
+
+    This function refreshes the figure, applies optional layout adjustments
+    (tight layout and despine), and saves the figure to the specified file.
+    It ensures the output directory exists and appends a default file extension
+    if none is provided.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The Matplotlib figure to save.
+    file : str
+        The file path where the figure will be saved. If the file does not
+        have an extension, '.png' will be appended.
+    tight : bool, optional
+        If True, applies `fig.tight_layout()` to adjust the layout of the figure
+        before saving. Default is True.
+    despine : bool, optional
+        If True, removes the top and right spines from the figure using
+        `sns.despine()`. Default is True.
+    **kwargs : dict, optional
+        Additional keyword arguments passed to `fig.savefig()`.
+
+    Notes
+    -----
+    - The function ensures the output directory exists by creating it if necessary.
+    - Supported file extensions include 'png', 'jpg', 'svg', and 'eps'. If no
+      extension is provided, '.png' is used by default.
+    """
+    fig.canvas.draw_idle()   # Refresh only fig1
+    fig.canvas.flush_events()  # Process GUI events for fig1
+    if despine:
+        sns.despine(fig)
+    if tight:
+        fig.tight_layout()
+    fig.canvas.draw_idle()   # Refresh only fig1
+    fig.canvas.flush_events()  # Process GUI events for fig1
+    fig.show()
+
+    # Ensure the output directory exists
+    out_dir = os.path.dirname(file)
+    os.makedirs(out_dir, exist_ok=True)
+    if not file.endswith(('png', 'jpg', 'svg', 'eps')):
+        file = file + '.png'
+    fig.savefig(file, **kwargs)
+
+
 
 def normalize_lims(axs, which='both'):
     """for all axes in axs: set function to min/max of all axs
@@ -387,3 +450,71 @@ def normalize_lims(axs, which='both'):
         ymax = max([x[1] for x in ylims])
         for ax in axs:
             getattr(ax, f'set_{w}lim')([ymin, ymax])
+
+
+def highlight_cells(mask, ax, color='r', linewidth=1, linestyle='solid'):
+    """
+    Draws borders around the true entries of the mask array on a heatmap plot.
+
+    Parameters:
+    - mask (np.ndarray): A 2D binary mask array where True (or 1) entries indicate
+                         the cells that should be highlighted with a border.
+    - ax (matplotlib.axes.Axes): The axes on which the heatmap is plotted.
+    - color (str): Color of the border lines.
+    - linewidth (float): Width of the border lines.
+    - linestyle (str): Line style of the border lines.
+    """
+    # Ensure the mask is a 2D array
+    if len(mask.shape) != 2:
+        raise ValueError("Mask must be a 2D array.")
+
+    # Check if the mask dimensions match the plotted image dimensions
+    image_shape = ax.images[0].get_array().shape
+    if mask.shape != image_shape:
+        raise ValueError(f"Mask dimensions {mask.shape} do not match the plotted image dimensions {image_shape}.")
+
+    # Function to check if a cell is outside the mask or out of bounds
+    def is_outside_mask(i, j, mask):
+        if i < 0 or i >= mask.shape[0] or j < 0 or j >= mask.shape[1]:
+            return True
+        return not mask[i, j]
+
+    # Loop through each cell in the mask to draw borders around masked regions
+    for i in range(mask.shape[0]):
+        for j in range(mask.shape[1]):
+            if mask[i, j]:
+                # Draw top border if the cell above is outside the mask
+                if is_outside_mask(i - 1, j, mask):
+                    ax.plot([j - 0.5, j + 0.5], [i - 0.5, i - 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+                # Draw bottom border if the cell below is outside the mask
+                if is_outside_mask(i + 1, j, mask):
+                    ax.plot([j - 0.5, j + 0.5], [i + 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+                # Draw left border if the cell to the left is outside the mask
+                if is_outside_mask(i, j - 1, mask):
+                    ax.plot([j - 0.5, j - 0.5], [i - 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+                # Draw right border if the cell to the right is outside the mask
+                if is_outside_mask(i, j + 1, mask):
+                    ax.plot([j + 0.5, j + 0.5], [i - 0.5, i + 0.5], color=color, linewidth=linewidth, linestyle=linestyle)
+
+
+"""
+Complete
+one-liner
+ visualiser for alpha-band travelling waves in MEG.
+
+Just call
+
+    show_alpha_dynamics(raw)
+
+where `raw` is an mne.io.Raw object that has already been
+cleaned (Maxwell filter & ICA, etc.).  Nothing else is needed.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import mne
+from scipy.signal import hilbert
+from scipy.spatial.distance import cdist
+
+
+#

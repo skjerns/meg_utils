@@ -15,7 +15,7 @@ from scipy.signal import welch, find_peaks
 from tqdm import tqdm
 from sklearn.linear_model import LinearRegression
 from scipy.signal import detrend
-import plotting
+from meg_utils import plotting
 from scipy.optimize import minimize
 from scipy.stats import norm
 import matplotlib.pyplot as plt
@@ -310,60 +310,62 @@ def get_alpha_phase(raw, alpha_peak, bandwidth=1.5):
 
 
 
+import numpy as np
+from scipy.optimize import minimize
+from scipy.stats import norm
+import matplotlib.pyplot as plt
 
+def gaussian(params, time):
+    amp, mean, std, baseline = params
+    return amp * norm.pdf(time, mean, std) + baseline
 
-def fit_curve(trs, sfreq=100, tr=1.25, model='sine', plot_curve=False):
-    def sine_truncated(params, time):
-        freq, amp, shift, baseline = params
-        wave = amp / 2 * np.sin(2 * np.pi * freq * time - 2 * np.pi * freq * shift - 0.5 * np.pi) + baseline + amp / 2
-        wave[time < shift] = baseline
-        wave[time > shift + 1 / freq] = baseline
-        return wave
+def gaussian_sse(params, time, data):
+    return np.sum((data - gaussian(params, time)) ** 2)
 
-    def sine_sse(params, time, data):
-        y_pred = sine_truncated(params, time)
-        return np.sum((data - y_pred) ** 2)
+def fit_curve(trs, sfreq=100, tr=1.25, model='gaussian', plot_curve=False):
+    if model != 'gaussian':
+        raise ValueError("Only 'gaussian' model is implemented.")
 
-    def gaussian(params, time):
-        amp, mean, std, baseline = params
-        return amp * norm.pdf(time, mean, std) + baseline
-
-    def gaussian_sse(params, time, data):
-        y_pred = gaussian(params, time)
-        return np.sum((data - y_pred) ** 2)
     trs = np.asarray(trs)
     time = np.arange(len(trs)) * tr
+
+    # Normalize input: range [0, 1]
+    trs = (trs - np.min(trs)) / (np.max(trs) - np.min(trs) + 1e-8)
+
+    # Initial guess:
+    max_idx = np.argmax(trs)
+    mean_guess = time[max_idx]
+    std_guess = 2.5 * tr  # 2σ = 5 TRs
+    amp_guess = 1.0
+    baseline_guess = 0.0
+    p0 = [amp_guess, mean_guess, std_guess, baseline_guess]
+
+    # Bounds
+    bounds = [(0, 1.5),               # amplitude
+              (time[0], time[-1]),   # mean
+              (0.1, 10.0),           # std dev
+              (-0.5, 0.5)]           # baseline
+
+    # Fit
+    result = minimize(gaussian_sse, p0, args=(time, trs), bounds=bounds, method='L-BFGS-B')
+    best_params = result.x
+
+    # Resample at high resolution
     fine_time = np.linspace(time[0], time[-1], int((time[-1] - time[0]) * sfreq) + 1)
-
-    if model == 'sine':
-        # Initial guess: freq, amp, shift, baseline
-        p0 = [0.2, 0.6, 0.0, 0.1]
-        bounds = [(0.01, 0.5), (0.1, 1.0), (0.0, 5.0), (0.0, 0.3)]
-        result = minimize(sine_sse, p0, args=(time, trs), bounds=bounds, method='L-BFGS-B')
-        best_params = result.x
-        fitted_curve = sine_truncated(best_params, fine_time)
-
-    elif model == 'gaussian':
-        # Initial guess: amp, mean, std, baseline
-        p0 = [1.0, np.mean(time), 1.0, 0.0]
-        bounds = [(0, 10), (time[0], time[-1]), (0.01, 10), (-1, 1)]
-        result = minimize(gaussian_sse, p0, args=(time, trs), bounds=bounds, method='L-BFGS-B')
-        best_params = result.x
-        fitted_curve = gaussian(best_params, fine_time)
-
-    else:
-        raise ValueError("Model must be either 'sine' or 'gaussian'.")
+    fitted_curve = gaussian(best_params, fine_time)
 
     if plot_curve:
-        plt.plot(time, trs, 'o', label='Original TRs')
-        plt.plot(fine_time, fitted_curve, '-', label=f'{model.capitalize()} Fit')
+        c = plt.gca()._get_lines.get_next_color()
+        plt.plot(time, trs, '-', label='Normalized TRs', c=c, alpha=0.3)
+        plt.plot(fine_time, fitted_curve, '--', label='Gaussian Fit', c=c)
         plt.xlabel('Time (s)')
-        plt.ylabel('Amplitude')
-        plt.legend()
+        plt.ylabel('Normalized Probability')
+        # plt.legend()
         plt.tight_layout()
         plt.show()
 
     return fitted_curve
+
 
 
 def wave_speed_cm(
