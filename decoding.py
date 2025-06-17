@@ -141,8 +141,8 @@ def save_clf(clf, filename, save_json=True, metadata=None):
 def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                                  n_jobs=-2, plot_confmat=False, title_add="",
                                  ex_per_fold=2, simulate=False, subj="",
-                                 tmin=-100, tmax=500,
-                                 ms_per_point=10, return_probas=False,
+                                 tmin=-0.1, tmax=0.5, sfreq=100,
+                                 return_probas=False,
                                  verbose=True):
     """
     Perform cross-validation across time on the given dataset.
@@ -208,7 +208,8 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
 
     # Initialize array to store all predictions
     all_probas = np.zeros([len(data_y), time_max, len(labels)])
-    times = np.linspace(tmin * 1000, tmax * 1000, time_max).round()
+
+    times = np.linspace(tmin*1000, tmax*1000, time_max).round()
 
     # Iterate over each fold
     for j, idxs in enumerate(idxs_tuples):
