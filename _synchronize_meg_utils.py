@@ -92,7 +92,7 @@ if __name__ == "__main__":
     for repo in repos:
         print(f"git pull ..{repo.replace(base_directory, '')} -> ", end=' ')
         success, output = pull_git_repo(repo)
-        summary = textwrap.indent(summarize_git_pull_output_line(output), '   | ')
+        summary = textwrap.indent(summarize_git_pull_output_line(output), '   ')
         if success:
             if "Already up to date" in output:
                 print(f"ok\n")
