@@ -367,6 +367,57 @@ def fit_curve(trs, sfreq=100, tr=1.25, model='gaussian', plot_curve=False):
     return fitted_curve
 
 
+def create_oscillation(hz, sfreq=100, n_samples=None, n_seconds=None,
+                       phase_radians=None, phase_degrees=None, amplitude=1.0):
+    """
+    Generate a sinusoidal waveform with specific frequency and offset.
+
+    Parameters
+    ----------
+    hz : float
+        Frequency of the sine wave in Hertz.
+    sfreq : float, default 100
+        Sampling rate in samples / second.
+    n_samples : int, optional
+        Number of samples to return. Mutually exclusive with `n_seconds`.
+    n_seconds : float, optional
+        Length of the waveform in seconds. Mutually exclusive with `n_samples`.
+    phase_radians : float, optional
+        Initial phase offset in radians [0 – 2π]. Mutually exclusive with `phase_degrees`.
+    phase_degrees : float, optional
+        Initial phase offset in degrees [0 – 360]. Mutually exclusive with `phase_radians`.
+    amplitude : float, default 1.0
+        Scalar applied to the output.
+
+    Returns
+    -------
+    numpy.ndarray
+        1-D array of shape (`n_samples`,) containing the sine wave.
+    """
+    # Handle phase
+    if (phase_radians is not None) and (phase_degrees is not None):
+        raise ValueError("Specify only one of `phase_radians` or `phase_degrees`.")
+    if (phase_radians is None) and (phase_degrees is None):
+        phase = 0.0
+    elif phase_radians is not None:
+        phase = phase_radians
+    else:
+        phase = np.deg2rad(phase_degrees)
+
+    # Handle duration
+    if (n_samples is None) and (n_seconds is None):
+        n_seconds = 1
+    if (n_samples is None) == (n_seconds is None):
+        raise ValueError("Specify exactly one of `n_samples` or `n_seconds`.")
+    if n_samples is None:
+        n_samples = int(round(n_seconds * sfreq))
+
+    # Generate time vector and waveform
+    t = np.arange(n_samples, dtype=float) / sfreq
+    return amplitude * np.sin(2 * np.pi * hz * t + phase)
+
+
+
 
 def wave_speed_cm(
         phases: np.ndarray,
