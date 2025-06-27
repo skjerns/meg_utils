@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jun 27 08:58:58 2025
+
+a helper script to keep all meg_utils submodules in sync
+
+@author: simon
+"""
+
+import os
+import subprocess
+import textwrap
+
+def find_git_dirs(base_dir, target_folder):
+    matches = []
+    for root, dirs, files in os.walk(base_dir):
+        if target_folder in dirs:
+            full_path = os.path.join(root, target_folder)
+            if os.path.exists(os.path.join(full_path, ".git")):
+                matches.append(full_path)
+    return matches
+
+def pull_git_repo(repo_path):
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "pull"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        return True, result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr.strip()
+
+
+
+if __name__ == "__main__":
+    base_folder = "~/Nextcloud/ZI"
+    base_directory = os.path.expanduser(base_folder)
+    target = "meg_utils"
+    print(f"Searching for '{target}' repositories in {base_directory}...\n")
+
+    repos = find_git_dirs(base_directory, target)
+    if not repos:
+        raise Exception("No repositories found.")
+
+    for repo in repos:
+        print(f"Found {repo}")
+
+    input('Continue? [enter]')
+
+    print()
+    for repo in repos:
+        print(f"git pull ..{repo.replace(base_directory, '')} -> ", end=' ')
+        success, output = pull_git_repo(repo)
+        if success:
+            print("ok")
+        else:
+            print(f"ERROR\n{textwrap.indent(output, '    |')}")
