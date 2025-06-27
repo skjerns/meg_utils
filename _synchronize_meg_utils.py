@@ -34,6 +34,44 @@ def pull_git_repo(repo_path):
     except subprocess.CalledProcessError as e:
         return False, e.stderr.strip()
 
+def summarize_git_pull_output_line(output):
+    lines = output.strip().split('\n')
+    summary = {
+        "commit_range": lines[0] if lines else "No update info",
+        "files_changed": 0,
+        "insertions": 0,
+        "deletions": 0,
+        "created": [],
+        "modified": [],
+    }
+
+    for line in lines:
+        if "file changed" in line:
+            parts = line.split(',')
+            for part in parts:
+                part = part.strip()
+                if "file changed" in part or "files changed" in part:
+                    summary["files_changed"] = int(part.split()[0])
+                elif "insertion" in part:
+                    summary["insertions"] = int(part.split()[0])
+                elif "deletion" in part:
+                    summary["deletions"] = int(part.split()[0])
+        elif "create mode" in line:
+            summary["created"].append(line.split()[-1])
+        elif "|" in line:
+            summary["modified"].append(line.split("|")[0].strip())
+
+    created = f"created: {', '.join(summary['created'])}" if summary["created"] else ""
+    modified = f"modified: {', '.join(summary['modified'])}" if summary["modified"] else ""
+    parts = [
+        summary["commit_range"],
+        f"{summary['files_changed']} file(s) changed",
+        f"{summary['insertions']} insertion(s)",
+        f"{summary['deletions']} deletion(s)",
+        created,
+        modified
+    ]
+    return " | ".join(part for part in parts if part)
 
 
 if __name__ == "__main__":
@@ -55,7 +93,11 @@ if __name__ == "__main__":
     for repo in repos:
         print(f"git pull ..{repo.replace(base_directory, '')} -> ", end=' ')
         success, output = pull_git_repo(repo)
+        summary = textwrap.indent(summarize_git_pull_output_line(output), '   | ')
         if success:
-            print("ok")
+            if "Already up to date" in output:
+                print(f"ok\n")
+            else:
+                print(f"ok\n{summary}")
         else:
-            print(f"ERROR\n{textwrap.indent(output, '    |')}")
+            print(f"ERROR\n{textwrap.indent(output, '    | ')}\n")
