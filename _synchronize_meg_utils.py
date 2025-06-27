@@ -64,10 +64,9 @@ def summarize_git_pull_output_line(output):
     created = f"created: {', '.join(summary['created'])}" if summary["created"] else ""
     modified = f"modified: {', '.join(summary['modified'])}" if summary["modified"] else ""
     parts = [
-        summary["commit_range"],
-        f"{summary['files_changed']} file(s) changed",
-        f"{summary['insertions']} insertion(s)",
-        f"{summary['deletions']} deletion(s)",
+        f"{summary['files_changed']} files",
+        f"{summary['insertions']} inserts",
+        f"{summary['deletions']} dels",
         created,
         modified
     ]
@@ -98,6 +97,6 @@ if __name__ == "__main__":
             if "Already up to date" in output:
                 print(f"ok\n")
             else:
-                print(f"ok\n{summary}")
+                print(f"ok\n{summary}\n")
         else:
             print(f"ERROR\n{textwrap.indent(output, '    | ')}\n")
