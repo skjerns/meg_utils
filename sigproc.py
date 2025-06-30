@@ -11,11 +11,8 @@ import warnings
 import mne
 import numpy as np
 from collections import namedtuple
-from scipy.signal import welch, find_peaks
-from tqdm import tqdm
-from sklearn.linear_model import LinearRegression
+from scipy.signal import welch
 from scipy.signal import detrend
-from meg_utils import plotting
 from scipy.optimize import minimize
 from scipy.stats import norm
 import matplotlib.pyplot as plt
@@ -368,53 +365,57 @@ def fit_curve(trs, sfreq=100, tr=1.25, model='gaussian', plot_curve=False):
 
 
 def create_oscillation(hz, sfreq=100, n_samples=None, n_seconds=None,
-                       phase_radians=None, phase_degrees=None, amplitude=1.0):
+                       phi_rad=None, phi_deg=None, amp=1.0):
     """
-    Generate a sinusoidal waveform with specific frequency and offset.
+    Generate a sinusoidal waveform with amplitude modulation per cycle.
 
     Parameters
     ----------
     hz : float
         Frequency of the sine wave in Hertz.
     sfreq : float, default 100
-        Sampling rate in samples / second.
+        Sampling rate in samples/second.
     n_samples : int, optional
         Number of samples to return. Mutually exclusive with `n_seconds`.
     n_seconds : float, optional
         Length of the waveform in seconds. Mutually exclusive with `n_samples`.
     phase_radians : float, optional
-        Initial phase offset in radians [0 – 2π]. Mutually exclusive with `phase_degrees`.
+        Initial phase offset in radians [0–2π]. Mutually exclusive with `phase_degrees`.
     phase_degrees : float, optional
-        Initial phase offset in degrees [0 – 360]. Mutually exclusive with `phase_radians`.
-    amplitude : float, default 1.0
-        Scalar applied to the output.
+        Initial phase offset in degrees [0–360]. Mutually exclusive with `phase_radians`.
+    amp : float or array-like, default 1.0
+        If float, scales entire signal. If array-like, each cycle is scaled by its element;
+        wraps if shorter than total cycles.
 
     Returns
     -------
     numpy.ndarray
-        1-D array of shape (`n_samples`,) containing the sine wave.
+        1-D array of shape (`n_samples`,) containing the modulated sine wave.
     """
-    # Handle phase
-    if (phase_radians is not None) and (phase_degrees is not None):
-        raise ValueError("Specify only one of `phase_radians` or `phase_degrees`.")
-    if (phase_radians is None) and (phase_degrees is None):
-        phase = 0.0
-    elif phase_radians is not None:
-        phase = phase_radians
-    else:
-        phase = np.deg2rad(phase_degrees)
+    # phase handling
+    if phi_rad is not None and phi_deg is not None:
+        raise ValueError("Specify only one of `phi_rad` or `phi_deg`.")
+    phase = phi_rad if phi_rad is not None else (
+        np.deg2rad(phi_deg) if phi_deg is not None else 0.0)
 
-    # Handle duration
-    if (n_samples is None) and (n_seconds is None):
-        n_seconds = 1
+    # duration handling
     if (n_samples is None) == (n_seconds is None):
         raise ValueError("Specify exactly one of `n_samples` or `n_seconds`.")
     if n_samples is None:
         n_samples = int(round(n_seconds * sfreq))
 
-    # Generate time vector and waveform
+    # time vector and base waveform
     t = np.arange(n_samples, dtype=float) / sfreq
-    return amplitude * np.sin(2 * np.pi * hz * t + phase)
+    sine = np.sin(2 * np.pi * hz * t + phase)
+
+    # amplitude modulation
+    if np.isscalar(amp):
+        return amp * sine
+
+    amp_arr = np.asarray(amp, dtype=float)
+    # determine cycle index for each sample
+    cycle_idx = (np.floor(hz * t).astype(int) % amp_arr.size)
+    return sine * amp_arr[cycle_idx]
 
 
 
