@@ -379,10 +379,10 @@ def create_oscillation(hz, sfreq=100, n_samples=None, n_seconds=None,
         Number of samples to return. Mutually exclusive with `n_seconds`.
     n_seconds : float, optional
         Length of the waveform in seconds. Mutually exclusive with `n_samples`.
-    phase_radians : float, optional
-        Initial phase offset in radians [0–2π]. Mutually exclusive with `phase_degrees`.
-    phase_degrees : float, optional
-        Initial phase offset in degrees [0–360]. Mutually exclusive with `phase_radians`.
+    phi_rad : float, optional
+        Initial phase offset in radians [0–2π]. Mutually exclusive with `phi_deg`.
+    phi_deg : float, optional
+        Initial phase offset in degrees [0–360]. Mutually exclusive with `phi_rad`.
     amp : float or array-like, default 1.0
         If float, scales entire signal. If array-like, each cycle is scaled by its element;
         wraps if shorter than total cycles.
