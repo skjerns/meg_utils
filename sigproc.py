@@ -16,6 +16,7 @@ from scipy.signal import detrend
 from scipy.optimize import minimize
 from scipy.stats import norm
 import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
 
 import numpy as np
 import mne
@@ -69,31 +70,42 @@ def bandpass(data, lfreq=None, ufreq=None, sfreq=100, verbose=False, **kwargs):
     raw.filter(l_freq=lfreq, h_freq=ufreq, verbose=verbose, **kwargs)
     return raw.get_data().squeeze().astype(data.dtype, copy=False)
 
-def notch(data, freqs=None, sfreq=100, verbose=False, **kwargs):
+def notch(data, freqs=None, sfreq=100, verbose=False, n_jobs=-1, **kwargs):
     """
-    Apply notch filter using MNE.
+    Apply notch filter using MNE RawArray, epoch-wise if 3D.
 
     Parameters:
-        data (ndarray): 2D or 3D input (channels x time | epochs x channels x time)
+        data (ndarray): 2D (channels x time) or 3D (epochs x channels x time) EEG data
         freqs (list or float): Frequencies to filter out (e.g., line noise)
-        sfreq (float): Sampling rate
+        sfreq (float): Sampling frequency of data
         verbose (bool): MNE verbosity flag
+        n_jobs (int): Number of parallel jobs to run
         **kwargs: Additional arguments to MNE notch_filter
 
     Returns:
-        ndarray: Notch-filtered data (squeezed)
+        ndarray: Notch-filtered data, same shape as input
     """
     if freqs is None:
         freqs = [50, 100]
-    if data.ndim > 3 or data.ndim < 2:
-        raise ValueError(f'Invalid data dimensions for notch: {data.ndim}')
-    data = np.atleast_3d(data)
-    ch_names = ['ch{}'.format(i) for i in range(data.shape[1])]
-    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=['eeg'] * data.shape[1])
-    raw = mne.EpochsArray(data, info, tmin=0, verbose=verbose)
-    raw.notch_filter(freqs=freqs, verbose=verbose, **kwargs)
-    return raw.get_data().squeeze().astype(data.dtype, copy=False)
 
+    data = np.atleast_3d(data)
+    if data.ndim != 3:
+        raise ValueError(f"Input data must be 2D or 3D, got shape {data.shape}")
+
+    n_epochs, n_channels, n_times = data.shape
+    ch_names = [f'ch{i}' for i in range(n_channels)]
+    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=['eeg'] * n_channels)
+
+    def filter_epoch(epoch_data):
+        raw = mne.io.RawArray(epoch_data, info.copy(), verbose=verbose)
+        raw.notch_filter(freqs=freqs, verbose=verbose, **kwargs)
+        return raw.get_data()
+
+    filtered = Parallel(n_jobs=n_jobs)(
+        delayed(filter_epoch)(data[i]) for i in range(n_epochs)
+    )
+
+    return np.stack(filtered).astype(data.dtype, copy=False).squeeze()
 
 
 
