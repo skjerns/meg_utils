@@ -305,65 +305,6 @@ def get_alpha_phase(raw, alpha_peak, bandwidth=1.5):
     return ch_alpha_source, phases_peak, amplitude_peak
 
 
-
-
-import numpy as np
-from scipy.optimize import minimize
-from scipy.stats import norm
-import matplotlib.pyplot as plt
-
-def gaussian(params, time):
-    amp, mean, std, baseline = params
-    return amp * norm.pdf(time, mean, std) + baseline
-
-def gaussian_sse(params, time, data):
-    return np.sum((data - gaussian(params, time)) ** 2)
-
-def fit_curve(trs, sfreq=100, tr=1.25, model='gaussian', plot_curve=False):
-    if model != 'gaussian':
-        raise ValueError("Only 'gaussian' model is implemented.")
-
-    trs = np.asarray(trs)
-    time = np.arange(len(trs)) * tr
-
-    # Normalize input: range [0, 1]
-    trs = (trs - np.min(trs)) / (np.max(trs) - np.min(trs) + 1e-8)
-
-    # Initial guess:
-    max_idx = np.argmax(trs)
-    mean_guess = time[max_idx]
-    std_guess = 2.5 * tr  # 2σ = 5 TRs
-    amp_guess = 1.0
-    baseline_guess = 0.0
-    p0 = [amp_guess, mean_guess, std_guess, baseline_guess]
-
-    # Bounds
-    bounds = [(0, 1.5),               # amplitude
-              (time[0], time[-1]),   # mean
-              (0.1, 10.0),           # std dev
-              (-0.5, 0.5)]           # baseline
-
-    # Fit
-    result = minimize(gaussian_sse, p0, args=(time, trs), bounds=bounds, method='L-BFGS-B')
-    best_params = result.x
-
-    # Resample at high resolution
-    fine_time = np.linspace(time[0], time[-1], int((time[-1] - time[0]) * sfreq) + 1)
-    fitted_curve = gaussian(best_params, fine_time)
-
-    if plot_curve:
-        c = plt.gca()._get_lines.get_next_color()
-        plt.plot(time, trs, '-', label='Normalized TRs', c=c, alpha=0.3)
-        plt.plot(fine_time, fitted_curve, '--', label='Gaussian Fit', c=c)
-        plt.xlabel('Time (s)')
-        plt.ylabel('Normalized Probability')
-        # plt.legend()
-        plt.tight_layout()
-        plt.show()
-
-    return fitted_curve
-
-
 def create_oscillation(hz, sfreq=100, n_samples=None, n_seconds=None,
                        phi_rad=None, phi_deg=None, amp=1.0):
     """
@@ -416,8 +357,6 @@ def create_oscillation(hz, sfreq=100, n_samples=None, n_seconds=None,
     # determine cycle index for each sample
     cycle_idx = (np.floor(hz * t).astype(int) % amp_arr.size)
     return sine * amp_arr[cycle_idx]
-
-
 
 
 def wave_speed_cm(
@@ -504,3 +443,152 @@ def wave_speed_cm(
         speed_m = (2 * np.pi * freq_hz) / k  # m per second
 
     return float(speed_m * 100.0)            # → cm s⁻¹  or  cm cycle⁻¹
+
+
+import numpy as np
+from scipy.optimize import minimize
+from scipy.stats import norm
+import matplotlib.pyplot as plt
+
+
+class curves:
+    """Collection of curve primitives.  Each function takes `time` first."""
+
+    # --- model functions -------------------------------------------------
+
+    @staticmethod
+    def gaussian(time, amplitude, mean, std, baseline):
+        return amplitude * norm.pdf(time, mean, std) + baseline
+
+    @staticmethod
+    def sine_truncated(
+        time,
+        *,
+        frequency: float,
+        amplitude: float,
+        loc: float,
+        baseline: float = 0.0,
+    ):
+        """
+        Truncated half-sine pulse whose **centre** (peak) is at ``loc``.
+
+        The pulse spans one full period (``1 / frequency``) so that
+
+        * left edge  = ``loc – 1 / (2 · frequency)``
+        * right edge = ``loc + 1 / (2 · frequency)``
+        * peak       = ``loc``
+
+        Outside that window the function is flat at ``baseline``.
+
+        Parameters
+        ----------
+        time : array-like
+            Times at which to evaluate the waveform.
+        frequency : float
+            Oscillation frequency in hertz (Hz).
+        amplitude : float
+            Peak height above ``baseline``.  The function ranges
+            from ``baseline`` up to ``baseline + amplitude``.
+        loc : float
+            Centre (mean) of the pulse, analogous to *loc* in
+            :pyfunc:`scipy.stats.norm`.
+        baseline : float, default 0
+            Constant value returned outside the active window.
+
+        Returns
+        -------
+        numpy.ndarray
+            Waveform evaluated at ``time`` (same shape as input).
+        """
+        time = np.asarray(time, dtype=float)
+        period = 1.0 / frequency
+        start = loc - period / 2.0     # left edge of the window
+        end   = loc + period / 2.0     # right edge
+
+        # half-sine defined over 0 … π
+        phase = 2.0 * np.pi * frequency * (time - start) - 0.5 * np.pi
+        y = (amplitude / 2.0) * np.sin(phase) + baseline + (amplitude / 2.0)
+
+        # flatten outside the active window
+        y[(time < start) | (time > end)] = baseline
+        return y
+
+    # --------------------------------------------------------------------
+
+
+def fit_curve(data, data_sfreq=1 / 1.25, *,  model=curves.gaussian,
+              curve_sfreq=100, curve_params, plot_fit=False):
+
+    """
+     Fit a parametric curve to 1-D data with L-BFGS-B.
+
+     Args
+     ----
+     data : array-like
+         1-D signal.
+     data_sfreq : float, default 0.8
+         Sampling rate of `data` (Hz).
+     model : callable, default curves.gaussian
+         Function f(t, **params) generating the curve.
+     curve_sfreq : float, default 100
+         Sampling rate (Hz) of the returned fitted curve.
+     curve_params : dict
+         Mapping ``{name: ((lo, hi), p0)}`` of bounds and initial guess.
+     plot_fit : bool | matplotlib.axes.Axes, optional
+         • ``False`` – no plot
+         • ``True`` – plot on current axes
+         • ``Axes`` – plot on the given axes.
+
+     Returns
+     -------
+     fine_t : ndarray
+         High-resolution time axis (s) at `curve_sfreq`.
+     fitted : ndarray
+         Model evaluated at `fine_t` with the optimized parameters.
+     best : dict
+         Optimised parameter values ``{name: value}``.
+
+     Notes
+     -----
+     Minimises sum-squared error, with bounds enforced. If `plot_fit` is
+     truthy, overlays the raw data, initial guess, and final fit.
+     """
+    data = np.asarray(data, dtype=float)
+    t = np.arange(data.size) / data_sfreq
+
+    # --- unpack parameter meta ------------------------------------------
+    names  = list(curve_params.keys())
+    p0     = [curve_params[n][1] for n in names]          # initial guess
+    bounds = [tuple(curve_params[n][0]) for n in names]
+
+    # --- objective -------------------------------------------------------
+    def sse(p):
+        kwargs = dict(zip(names, p))
+        return np.sum((data - model(t, **kwargs)) ** 2)
+
+    # --- optimise -------------------------------------------------------
+    res  = minimize(sse, p0, bounds=bounds, method="L-BFGS-B")
+    best = dict(zip(names, res.x))
+
+    # --- high-res fitted curve ------------------------------------------
+    fine_t = np.arange(0, t[-1] + 1 / curve_sfreq, 1 / curve_sfreq)
+    fitted = model(fine_t, **best)
+
+    if plot_fit != False:
+        if not isinstance(plot_fit, plt.Axes):
+            ax = plt.gca()
+        # first plot the initial guess
+        fine_t = np.arange(0, t[-1] + 1 / curve_sfreq, 1 / curve_sfreq)
+        init   = model(fine_t, **dict(zip(names, p0)))
+        ax.plot(fine_t, init, ":", lw=1.2, label="initial guess", c='gray')
+
+        c = ax._get_lines.get_next_color()
+
+        # next the fitted curve
+        ax.scatter(t, data, s=20, label="data", c=c)
+        ax.plot(fine_t, fitted, "--", lw=1.4, label="fit", c=c)
+        ax.set_xlabel("Time (s)")
+        ax.legend()
+        ax.figure.tight_layout()
+
+    return fine_t, fitted, best
