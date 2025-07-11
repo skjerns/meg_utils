@@ -17,33 +17,84 @@ from scipy.optimize import minimize
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 
+import numpy as np
+import mne
+
 def resample(array, o_sfreq, t_sfreq, n_jobs=-1, verbose=False):
     """
-    resample a signal using MNE resample functions
-    This automatically is optimized for EEG applying filters etc
+    Resample EEG data using MNE.
 
-    1D : (timestep)
-    2D : (channels, timestep)
-    3D : (epochs, channels, timestep)
+    Parameters:
+        array (ndarray): 1D, 2D, or 3D input (time | channels x time | epochs x channels x time)
+        o_sfreq (float): Original sampling frequency
+        t_sfreq (float): Target sampling frequency
+        n_jobs (int): Number of parallel jobs (default: -1)
+        verbose (bool): MNE verbosity flag
 
-    :param array:     a 1D/2D/3D data array
-    :param o_sfreq: the original sampling frequency
-    :param t_sfreq: the target sampling frequency
-    :returns: the resampled signal
+    Returns:
+        ndarray: Resampled data with same shape as input (squeezed if needed)
     """
-    if o_sfreq==t_sfreq: return array
+    if o_sfreq == t_sfreq:
+        return array
     array = np.atleast_3d(array)
-
-    if array.ndim>3:
+    if array.ndim > 3:
         raise ValueError(f'Too many dimensions in array: {array.ndim}')
-
-    ch_names=['ch{}'.format(i) for i in range(array.shape[1])]
-    info = mne.create_info(ch_names=ch_names, sfreq=o_sfreq, ch_types=['eeg']*array.shape[1])
+    ch_names = ['ch{}'.format(i) for i in range(array.shape[1])]
+    info = mne.create_info(ch_names=ch_names, sfreq=o_sfreq, ch_types=['eeg'] * array.shape[1])
     raw_mne = mne.EpochsArray(array, info, tmin=0, verbose=verbose)
-
     resampled = raw_mne.resample(t_sfreq, n_jobs=n_jobs, verbose=verbose)
-    new_raw = resampled.get_data().squeeze()
-    return new_raw.astype(array.dtype, copy=False)
+    return resampled.get_data().squeeze().astype(array.dtype, copy=False)
+
+def bandpass(data, lfreq=None, ufreq=None, sfreq=100, verbose=False, **kwargs):
+    """
+    Apply bandpass filter using MNE.
+
+    Parameters:
+        data (ndarray): 2D or 3D input (channels x time | epochs x channels x time)
+        lfreq (float): Low cutoff frequency
+        ufreq (float): High cutoff frequency
+        sfreq (float): Sampling rate
+        verbose (bool): MNE verbosity flag
+        **kwargs: Additional arguments to MNE filter
+
+    Returns:
+        ndarray: Bandpass-filtered data (squeezed)
+    """
+    if data.ndim > 3 or data.ndim < 2:
+        raise ValueError(f'Invalid data dimensions for bandpass: {data.ndim}')
+    data = np.atleast_3d(data)
+    ch_names = ['ch{}'.format(i) for i in range(data.shape[1])]
+    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=['eeg'] * data.shape[1])
+    raw = mne.EpochsArray(data, info, tmin=0, verbose=verbose)
+    raw.filter(l_freq=lfreq, h_freq=ufreq, verbose=verbose, **kwargs)
+    return raw.get_data().squeeze().astype(data.dtype, copy=False)
+
+def notch(data, freqs=None, sfreq=100, verbose=False, **kwargs):
+    """
+    Apply notch filter using MNE.
+
+    Parameters:
+        data (ndarray): 2D or 3D input (channels x time | epochs x channels x time)
+        freqs (list or float): Frequencies to filter out (e.g., line noise)
+        sfreq (float): Sampling rate
+        verbose (bool): MNE verbosity flag
+        **kwargs: Additional arguments to MNE notch_filter
+
+    Returns:
+        ndarray: Notch-filtered data (squeezed)
+    """
+    if freqs is None:
+        freqs = [50, 100]
+    if data.ndim > 3 or data.ndim < 2:
+        raise ValueError(f'Invalid data dimensions for notch: {data.ndim}')
+    data = np.atleast_3d(data)
+    ch_names = ['ch{}'.format(i) for i in range(data.shape[1])]
+    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=['eeg'] * data.shape[1])
+    raw = mne.EpochsArray(data, info, tmin=0, verbose=verbose)
+    raw.notch_filter(freqs=freqs, verbose=verbose, **kwargs)
+    return raw.get_data().squeeze().astype(data.dtype, copy=False)
+
+
 
 
 def get_ch_neighbours(ch_name, n=9, return_idx=False, plot=False):
@@ -70,7 +121,9 @@ def get_ch_neighbours(ch_name, n=9, return_idx=False, plot=False):
     return sorted([ch_as_in_raw.index(ch) for ch in chs_out]) if return_idx else chs_out
 
 
-def estimate_paf(
+
+
+def estimate_peak_alpha_freq(
     raw_or_fname,
     *,
     picks=None,
