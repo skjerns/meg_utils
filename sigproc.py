@@ -70,42 +70,46 @@ def bandpass(data, lfreq=None, ufreq=None, sfreq=100, verbose=False, **kwargs):
     raw.filter(l_freq=lfreq, h_freq=ufreq, verbose=verbose, **kwargs)
     return raw.get_data().squeeze().astype(data.dtype, copy=False)
 
-def notch(data, freqs=None, sfreq=100, verbose=False, n_jobs=-1, **kwargs):
+
+def notch(data, freqs=None, notch_widths=None, sfreq=100, verbose=False,
+          n_jobs=-1, **kwargs):
     """
-    Apply notch filter using MNE RawArray, epoch-wise if 3D.
+    Apply notch filter using MNE RawArray.
 
     Parameters:
-        data (ndarray): 2D (channels x time) or 3D (epochs x channels x time) EEG data
+        data (ndarray): EEG data. 2D (n_channels x n_times) or 3D (n_epochs x n_channels x n_times)
         freqs (list or float): Frequencies to filter out (e.g., line noise)
-        sfreq (float): Sampling frequency of data
+        sfreq (float): Sampling rate
         verbose (bool): MNE verbosity flag
-        n_jobs (int): Number of parallel jobs to run
-        **kwargs: Additional arguments to MNE notch_filter
+        n_jobs (int): Number of parallel jobs (default: -1)
+        **kwargs: Extra keyword arguments passed to MNE notch_filter
 
     Returns:
-        ndarray: Notch-filtered data, same shape as input
+        ndarray: Filtered data, same shape as input (squeezed if needed)
     """
     if freqs is None:
         freqs = [50, 100]
 
-    data = np.atleast_3d(data)
+    if data.ndim == 2:
+        data = data[np.newaxis, ...]
     if data.ndim != 3:
-        raise ValueError(f"Input data must be 2D or 3D, got shape {data.shape}")
+        raise ValueError(f"Unsupported data shape {data.shape}, must be 2D or 3D")
 
     n_epochs, n_channels, n_times = data.shape
     ch_names = [f'ch{i}' for i in range(n_channels)]
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=['eeg'] * n_channels)
 
-    def filter_epoch(epoch_data):
-        raw = mne.io.RawArray(epoch_data, info.copy(), verbose=verbose)
-        raw.notch_filter(freqs=freqs, verbose=verbose, **kwargs)
+    def filter_epoch(epoch):
+        raw = mne.io.RawArray(epoch, info, copy='both', verbose=verbose)
+        raw.notch_filter(freqs=freqs, notch_widths=notch_widths, verbose=verbose, **kwargs)
         return raw.get_data()
 
     filtered = Parallel(n_jobs=n_jobs)(
         delayed(filter_epoch)(data[i]) for i in range(n_epochs)
     )
 
-    return np.stack(filtered).astype(data.dtype, copy=False).squeeze()
+    return np.stack(filtered).astype(data.dtype).squeeze()
+
 
 
 
@@ -294,60 +298,99 @@ def estimate_peak_alpha_freq(
         model=model,
     )
 
+import warnings
+import numpy as np
+import mne
+from scipy.signal import welch, detrend
 
-def get_alpha_peak(raw, alpha_bounds=[7, 14], return_spectrum=False,
-                   plot_spectrum=False):
+
+def get_alpha_peak(raw_or_data,
+                   sfreq: float | None = None,
+                   alpha_bounds: tuple[float, float] = (7, 14),
+                   return_spectrum: bool = False,
+                   plot_spectrum: bool = False):
     """
-    retrieve the peak frequency of the alpha activity
-
-    Parameters
-    ----------
-    raw : TYPE
-        the mne Raw file to examine.
-    alpha_bounds : list
-        lower and upper bounds of alpha band search window
-    return_spectrum : bool, optional
-        if True return the spectrum and frequencies
+    Alpha-peak finder for MNE Raw, (data, sfreq) tuples, or plain ndarrays.
 
     Returns
     -------
     alpha_peak : float
-        peak of the alpha band.
-    source : int
-        sensor with highest power in that band
+        Peak frequency in the α-band
+    src_chan   : int
+        Index of the channel with the highest α-band power
+    freqs, psd : if `return_spectrum` is True
     """
-    assert len(alpha_bounds)==2
-    alpha_l, alpha_u = alpha_bounds
-    picks = mne.read_vectorview_selection('occipital', info=raw.info)
-    data = raw.get_data(picks=picks)
-    sfreq = raw.info['sfreq']
-    freqs, w = welch(data, fs=sfreq, nperseg=sfreq*10, scaling='spectrum')
-    idx_alpha = (alpha_l<freqs) & (freqs<alpha_u)
+    lo, hi = alpha_bounds
 
-    # get sensor with highest alpha power
-    idx_source = np.argmax(w.mean(1))
-    source_sensor = picks[idx_source]
+    # ------------------------------------------------------------------ #
+    # Unwrap input                                                       #
+    # ------------------------------------------------------------------ #
+    if isinstance(raw_or_data, mne.io.BaseRaw):          # MNE Raw object
+        if sfreq is not None:
+            raise ValueError("Provide either an MNE-Raw or (data, sfreq), "
+                             "not both.")
+        picks = mne.read_vectorview_selection('occipital',
+                                              info=raw_or_data.info)
+        data = raw_or_data.get_data(picks=picks)         # shape: ch × time
+        sfreq = raw_or_data.info['sfreq']
+    else:                                                # ndarray input
+        if sfreq is None:
+            raise ValueError("When passing an ndarray you must supply sfreq.")
+        data = np.asarray(raw_or_data)
+        picks = np.arange(data.shape[0])                 # all channels
 
-    # get power peak
-    w_alpha = detrend(w[:, idx_alpha].mean(0))
-    alpha_peak = freqs[idx_alpha][np.argmax(w_alpha)]
+    # Ensure shape is (n_channels, n_times) ----------------------------- #
+    if data.ndim == 1:                                   # single channel
+        data = data[np.newaxis, :]
 
-    if freqs[np.argmax(alpha_bounds[0]<freqs)]==alpha_peak:
-        warnings.warn(f'alpha peak lays at bounds, not likely? {alpha_peak=}')
-    if freqs[np.argmax(alpha_bounds[1]<freqs)]==alpha_peak:
-        warnings.warn(f'alpha peak lays at bounds, not likely? {alpha_peak=}')
+    assert data.ndim <3 , 'only 1d or 2d allowed'
 
+    if data.shape[0] > data.shape[1]:
+        raise ValueError("Expected shape (n_channels, n_times); "
+                         f"got {data.shape}. Swap axes if needed.")
+
+    # ------------------------------------------------------------------ #
+    # Power spectral density (Welch)                                     #
+    # ------------------------------------------------------------------ #
+    # Compute along time axis (axis = 1).  Result: psd shape =
+    # (n_channels, n_freqs)
+    freqs, psd = welch(
+        data,
+        fs=sfreq,
+        nperseg=int(sfreq * 5),
+        scaling='spectrum',
+        axis=1,                     # ← critical change
+    )
+
+    sel = (freqs > lo) & (freqs < hi)
+
+    # Detrend before peak pick to avoid broad slopes
+    alpha_psd = detrend(psd[:, sel].mean(0))
+    alpha_peak = float(freqs[sel][np.argmax(alpha_psd)])
+
+    if (alpha_peak-lo)<=0.25 or (hi-alpha_peak)<=0.25 :
+        warnings.warn(f"α-peak lies on the band edge: {alpha_peak:.2f} Hz")
+
+    # ------------------------------------------------------------------ #
+    # Optional plot                                                      #
+    # ------------------------------------------------------------------ #
     if plot_spectrum:
         import matplotlib.pyplot as plt
-        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-        fig, ax = plt.subplots(1, 1)
-        ax.plot(freqs[idx_alpha], w_alpha)
-        inset_ax = inset_axes(ax, width="20%", height="20%", loc="upper right")  # Adjust size and location
+        plt.plot(freqs[sel], alpha_psd)
+        plt.axvline(alpha_peak, ls='--')
+        plt.xlabel('Frequency (Hz)')
+        plt.ylabel('PSD')
+        plt.show()
 
     if return_spectrum:
-        alpha_peak, source_sensor, freqs, w
+        return alpha_peak, freqs, psd
+    return alpha_peak
 
-    return alpha_peak, source_sensor
+
+
+
+
+
 
 
 def get_alpha_phase(raw, alpha_peak, bandwidth=1.5):
