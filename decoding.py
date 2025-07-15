@@ -300,6 +300,16 @@ def train_predict(train_x, train_y, test_x, clf=None, neg_x=None, proba=False):
     return pred
 
 
+def get_mean_corrcoef(arr, axis=0):
+    """calculate corrcoeff for matrix and return mean off-diagonal correlation"""
+    assert isinstance(clf, BaseEstimator), "must be sklearn.classifier"
+    # try:
+    corrcoef = np.abs(np.corrcoef(arr))
+    corrcoef[np.eye(len(corrcoef)) == 1] = np.nan
+    return np.nanmean(corrcoef, axis)
+
+
+
 def get_channel_importances(data_x, data_y, n_folds=5,
                             n_trees=500, **kwargs):
     """returns the importance of features from a RandomForest cross-validation"""
