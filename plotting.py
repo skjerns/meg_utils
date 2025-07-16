@@ -429,27 +429,84 @@ def savefig(fig, file, tight=True, despine=True, **kwargs):
     fig.savefig(file, **kwargs)
 
 
-
-def normalize_lims(axs, which='both'):
-    """for all axes in axs: set function to min/max of all axs
-
+def normalize_lims(axs, which='xy'):
+    """
+    Synchronize axis and/or color (clim) limits across a collection of Matplotlib Axes.
 
     Parameters
     ----------
-    axs : list
-        list of axes to normalize.
-    which : string, optional
-        Which axis to normalize. Can be 'x', 'y', 'xy' oder 'both'.
+    axs : sequence of matplotlib.axes.Axes
+        Axes to normalize. Can be a single Axes, list/tuple, or array (e.g., from plt.subplots()).
+    which : {'x','y','v','xy','xv','yv','xyv','both','all'}, default 'xy'
+        Characters indicate which limits to synchronize:
+            'x'  -> xlim
+            'y'  -> ylim
+            'v'  -> color limits (clim) of the most recently added image on each Axes.
+        Combinations are allowed by concatenation (e.g., 'xy', 'xv', 'yv', 'xyv').
+        Back-compat: 'both' == 'xy'.
+        Convenience: 'all'  == 'xyv'.
 
+    Notes
+    -----
+    * For 'v', only the newest image in each Axes (`ax.images[-1]`) is considered/updated.
+    * Axes without images are ignored for the global color range calculation.
+    * When possible, the image's underlying array is inspected (np.nanmin / np.nanmax).
+      If that fails, the current clim from the image is used as a fallback.
     """
-    if which=='both':
-        which='xy'
-    for w in which:
-        ylims = [getattr(ax, f'get_{w}lim')() for ax in axs]
-        ymin = min([x[0] for x in ylims])
-        ymax = max([x[1] for x in ylims])
+    # Flatten / normalize the axes input to a simple list.
+    if hasattr(axs, 'flat'):  # numpy array of Axes
+        axs = [ax for ax in axs.flat]
+
+    spec = which.lower()
+    if spec == 'both':
+        spec = 'xy'
+    elif spec == 'all':
+        spec = 'xyv'
+
+    # canonical order: x, y, v
+    spec = ''.join(ch for ch in 'xyv' if ch in spec)
+
+    # --- X limits ---
+    if 'x' in spec:
+        xlims = [ax.get_xlim() for ax in axs]
+        xmin = min(l[0] for l in xlims)
+        xmax = max(l[1] for l in xlims)
         for ax in axs:
-            getattr(ax, f'set_{w}lim')([ymin, ymax])
+            ax.set_xlim(xmin, xmax)
+
+    # --- Y limits ---
+    if 'y' in spec:
+        ylims = [ax.get_ylim() for ax in axs]
+        ymin = min(l[0] for l in ylims)
+        ymax = max(l[1] for l in ylims)
+        for ax in axs:
+            ax.set_ylim(ymin, ymax)
+
+    # --- Color limits (v) ---
+    if 'v' in spec:
+        vmins = []
+        vmaxs = []
+        for ax in axs:
+            if not ax.images:
+                continue
+            im = ax.images[-1]  # most recently added image
+            try:
+                arr = np.asarray(im.get_array())
+                vmins.append(np.nanmin(arr))
+                vmaxs.append(np.nanmax(arr))
+            except Exception:
+                v0, v1 = im.get_clim()
+                vmins.append(v0)
+                vmaxs.append(v1)
+        if vmins:  # at least one image across all axes
+            vmin = min(vmins)
+            vmax = max(vmaxs)
+            for ax in axs:
+                if not ax.images:
+                    continue
+                ax.images[-1].set_clim(vmin, vmax)
+
+    return
 
 
 def highlight_cells(mask, ax, color='r', linewidth=1, linestyle='solid'):

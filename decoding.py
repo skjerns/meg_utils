@@ -270,7 +270,7 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
     return (df, all_probas) if return_probas else df
 
 
-def train_predict(train_x, train_y, test_x, clf=None, neg_x=None, proba=False):
+def train_predict(train_x, train_y, test_x, clf, neg_x=None, proba=False):
     """
     Train a classifier with the given data and return predictions on test data.
 
@@ -278,7 +278,7 @@ def train_predict(train_x, train_y, test_x, clf=None, neg_x=None, proba=False):
     train_x (array-like): The training input samples. Must be a 2D array.
     train_y (array-like): The target values (class labels) for the training input samples.
     test_x (array-like): The input samples for which predictions are to be made. Must be a 2D array.
-    clf (object, optional): The classifier object that implements the 'fit' and 'predict' methods.
+    clf (object): The classifier object that implements the 'fit' and 'predict' methods.
                             If None, a default classifier should be provided outside this function.
     neg_x (array-like, optional): Additional negative class samples that contain no stimulation
                                   (e.g., a "null class"). Used for training if provided.
@@ -296,8 +296,9 @@ def train_predict(train_x, train_y, test_x, clf=None, neg_x=None, proba=False):
         clf.fit(train_x, train_y)
     else:
         clf.fit(train_x, train_y, neg_x=neg_x)
-    pred = clf.predict_proba(test_x) if proba else clf.predict(test_x)
-    return pred
+    if proba:
+        return clf.predict_proba(test_x)
+    return clf.predict(test_x)
 
 
 def get_mean_corrcoef(arr):
