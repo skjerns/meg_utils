@@ -15,6 +15,7 @@ from scipy.signal import welch
 from scipy.signal import detrend
 from scipy.optimize import minimize
 from scipy.stats import norm
+
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
@@ -700,3 +701,74 @@ def fit_curve(data, data_sfreq=1 / 1.25, *,  model=curves.gaussian,
         ax.figure.tight_layout()
 
     return fine_t, fitted, best
+
+
+
+def interpolate(times, data, n_samples=None, kind='linear', axis=-1):
+    """interpolate data sampled at times to evenly spaced
+    expected is row-wise interpolation, e.g. 1x10, 2x10
+
+    kind: 'linear', 'nearest', 'nearest-up', 'zero', 'slinear',
+    'quadratic', 'cubic', 'previous', or 'next'. 'zero', 'slinear',"""
+    from scipy.interpolate import interp1d
+
+    if n_samples is None:
+        n_samples = len(np.unique(times))
+
+    if set(times)!=len(times):
+        times_unique = np.unique(times)
+        mean = [np.mean(data[times==t], 0) for t in times_unique]
+        data = np.transpose(mean)
+        times = times_unique
+
+    # Define evenly spaced time grid
+    even_timepoints = np.linspace(times.min(), times.max(), num=n_samples)
+
+    # Interpolation function (linear, can change to 'cubic', 'quadratic', etc.)
+    interp_func = interp1d(times, data, kind=kind)  # or 'cubic'
+
+    # Interpolated values
+    even_spaced_values = interp_func(even_timepoints)
+    return even_timepoints, even_spaced_values
+
+
+def polyfit(times, data, n_samples=None, degree=3, axis=-1):
+    """Fit a polynomial to data sampled at times and evaluate it at evenly spaced points.
+
+    Parameters:
+    - times: 1D array of timepoints (unevenly spaced)
+    - data: array of values (can be 1D or 2D)
+    - n_samples: number of evenly spaced samples to generate; defaults to len(times)
+    - degree: degree of polynomial
+    - axis: axis along which to fit (only applies to 2D arrays)
+
+    Returns:
+    - fitted values at evenly spaced timepoints
+    """
+    import numpy as np
+
+    times = np.asarray(times)
+    data = np.asarray(data)
+
+    if n_samples is None:
+        n_samples = len(np.unique(times))
+
+    even_timepoints = np.linspace(times.min(), times.max(), num=n_samples)
+
+    if data.ndim == 1:
+        coeffs = np.polyfit(times, data, deg=degree)
+        poly = np.poly1d(coeffs)
+        return even_timepoints, poly(even_timepoints)
+
+    elif data.ndim == 2:
+        # Move the target axis to be first for iteration
+        data = np.moveaxis(data, axis, 0)
+        fitted = np.array([
+            np.poly1d(np.polyfit(times, d, deg=degree))(even_timepoints)
+            for d in data
+        ])
+        # Move axis back to original
+        return even_timepoints, np.moveaxis(fitted, 0, axis)
+
+    else:
+        raise ValueError("Only 1D or 2D data is supported.")
