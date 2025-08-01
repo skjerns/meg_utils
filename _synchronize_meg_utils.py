@@ -1,18 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Helper to keep all meg_utils submodules in sync.
+
+- Searches ~ for all folders with 'nextcloud' in the name (ignore case)
+- Recursively finds 'meg_utils' repos under each detected Nextcloud directory
+- Runs 'git pull' in each repo and prints a compact summary
+
 Created on Fri Jun 27 08:58:58 2025
-
-a helper script to keep all meg_utils submodules in sync
-
-@author: simon
+Author: simon
 """
 
 import os
 import subprocess
 import textwrap
 
+
+def find_nextcloud_dirs(home_dir):
+    """Return absolute paths to directories in home_dir whose names contain 'nextcloud' (case-insensitive)."""
+    candidates = []
+    try:
+        for name in os.listdir(home_dir):
+            path = os.path.join(home_dir, name)
+            if os.path.isdir(path) and "nextcloud" in name.lower():
+                candidates.append(path)
+    except FileNotFoundError:
+        pass
+    return candidates
+
+
 def find_git_dirs(base_dir, target_folder):
+    """Walk base_dir to find target_folder directories that are git repos (contain a .git)."""
     matches = []
     for root, dirs, files in os.walk(base_dir):
         if target_folder in dirs:
@@ -21,7 +39,9 @@ def find_git_dirs(base_dir, target_folder):
                 matches.append(full_path)
     return matches
 
+
 def pull_git_repo(repo_path):
+    """Run 'git pull' in repo_path and return (success, output_or_error)."""
     try:
         result = subprocess.run(
             ["git", "-C", repo_path, "pull"],
@@ -34,7 +54,9 @@ def pull_git_repo(repo_path):
     except subprocess.CalledProcessError as e:
         return False, e.stderr.strip()
 
+
 def summarize_git_pull_output_line(output):
+    """Parse 'git pull' output to a compact single-line summary."""
     lines = output.strip().split('\n')
     summary = {
         "commit_range": lines[0] if lines else "No update info",
@@ -51,11 +73,20 @@ def summarize_git_pull_output_line(output):
             for part in parts:
                 part = part.strip()
                 if "file changed" in part or "files changed" in part:
-                    summary["files_changed"] = int(part.split()[0])
+                    try:
+                        summary["files_changed"] = int(part.split()[0])
+                    except ValueError:
+                        pass
                 elif "insertion" in part:
-                    summary["insertions"] = int(part.split()[0])
+                    try:
+                        summary["insertions"] = int(part.split()[0])
+                    except ValueError:
+                        pass
                 elif "deletion" in part:
-                    summary["deletions"] = int(part.split()[0])
+                    try:
+                        summary["deletions"] = int(part.split()[0])
+                    except ValueError:
+                        pass
         elif "create mode" in line:
             summary["created"].append(line.split()[-1])
         elif "|" in line:
@@ -74,29 +105,44 @@ def summarize_git_pull_output_line(output):
 
 
 if __name__ == "__main__":
-    base_folder = "~/Nextcloud/ZI"
-    base_directory = os.path.expanduser(base_folder)
+    home_dir = os.path.expanduser("~")
     target = "meg_utils"
-    print(f"Searching for '{target}' repositories in {base_directory}...\n")
 
-    repos = find_git_dirs(base_directory, target)
+    print("Scanning home directory for Nextcloud locations...\n")
+    nextcloud_dirs = find_nextcloud_dirs(home_dir)
+
+    if not nextcloud_dirs:
+        raise Exception("No Nextcloud-like directories found in ~ (looked for names containing 'nextcloud').")
+
+    for d in nextcloud_dirs:
+        print(f"Found Nextcloud directory: {d}")
+    print()
+
+    # Search all detected Nextcloud directories for target repos
+    repos_set = set()
+    for base in nextcloud_dirs:
+        for repo in find_git_dirs(base, target):
+            repos_set.add(os.path.abspath(repo))
+
+    repos = sorted(repos_set)
     if not repos:
-        raise Exception("No repositories found.")
+        raise Exception(f"No '{target}' git repositories found under detected Nextcloud directories.")
 
+    print(f"Searching for '{target}' repositories under detected Nextcloud directories...\n")
     for repo in repos:
         print(f"Found {repo}")
-
-    input('Continue? [enter]')
+    input('\nContinue? [enter]')
 
     print()
     for repo in repos:
-        print(f"git pull ..{repo.replace(base_directory, '')} -> ", end=' ')
+        rel = repo.replace(home_dir, "~")
+        print(f"git pull ..{rel} -> ", end=' ')
         success, output = pull_git_repo(repo)
-        summary = textwrap.indent(summarize_git_pull_output_line(output), '   ')
         if success:
-            if "Already up to date" in output:
-                print(f"ok\n")
+            if "Already up to date" in output or "Already up-to-date" in output:
+                print("ok\n")
             else:
+                summary = textwrap.indent(summarize_git_pull_output_line(output), '   ')
                 print(f"ok\n{summary}\n")
         else:
             print(f"ERROR\n{textwrap.indent(output, '    | ')}\n")
