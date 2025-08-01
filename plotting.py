@@ -423,7 +423,8 @@ def savefig(fig, file, tight=True, despine=True, **kwargs):
 
     # Ensure the output directory exists
     out_dir = os.path.dirname(file)
-    os.makedirs(out_dir, exist_ok=True)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     if not file.endswith(('png', 'jpg', 'svg', 'eps')):
         file = file + '.png'
     fig.savefig(file, **kwargs)
