@@ -50,36 +50,43 @@ def is_json_serializable(obj):
 def save_clf(clf, filename, save_json=True, metadata=None):
     """
     Saves a scikit-learn classifier to a compressed pickle file, with an optional
-    JSON sidecar containing parameters and training code.
+    JSON sidecar containing parameters and training code metadata.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     clf : object
-        Scikit-learn classifier object to save.
+        A scikit-learn classifier object to be saved.
 
-    name : str, optional
-        Identifier for the saved classifier. If `None`, the classifier's class
-        name is used. This value is incorporated into a BIDS-compatible filename.
+    filename : str
+        Full path (including filename) where the classifier will be saved. If the
+        filename has no extension, '.pkl.gz' is appended. A JSON sidecar is saved
+        to the same directory if `save_json` is True.
 
-    folder : str, optional
-        Directory where the classifier and associated files will be saved.
-        Defaults to the current working directory.
+    save_json : bool, default=True
+        Whether to save a JSON sidecar file containing classifier parameters and
+        the training code context.
 
-    save_json : bool, default True
-        If `True`, saves the classifier's parameters and training code in a
-        sidecar JSON file.
+    metadata : dict, optional
+        Additional metadata to include in the JSON sidecar file. If provided,
+        must be a dictionary. Will be merged with classifier parameters and code.
 
-    Notes:
-    ------
-    - The classifier is saved using compressed pickle format (`.pkl.gz`).
-      If the provided filename does not end with a compression extension
-      (e.g., `.zip`, `.gz`), `.pkl.gz` is appended.
-    - The JSON sidecar file contains the classifier's parameters and the code
-      context where  `save_clf` was called, retrieved using the `inspect` module.
-    - The filenames are constructed to be BIDS-compatible, following the pattern:
-      `sub-group_desc-<name>_clf.<extension>`.
+    Returns
+    -------
+    clf_path : str
+        Full path to the saved classifier file.
+
+    Notes
+    -----
+    - The classifier is saved using `joblib.dump` with gzip compression.
+    - The JSON sidecar includes:
+        - Classifier hyperparameters from `get_params()`, with non-serializable
+          objects converted to strings.
+        - The source code line from which `save_clf` was called (using `inspect`).
+        - Any additional user-provided metadata.
+    - Filenames follow the pattern `<base>_clf.pkl.gz` and `<base>.json`, where
+      `<base>` is derived from `filename` (without extension).
+    - If the target directory does not exist, it is created automatically.
     """
-
     # Set default name if none is provided
     if filename is None:
         # Get the classifier's class name
@@ -87,22 +94,24 @@ def save_clf(clf, filename, save_json=True, metadata=None):
         name = classifier_name.lower()
         base_fname = f"{name}_clf"
     else:
-        # Remove any existing file extension
-        base_fname = Path(filename).stem
+        if '.pkl' in filename:
+            raise ValueError(f'{filename} contains pickle ending, please give name without file ending')
+        base_fname = os.path.basename(filename).split('.')[0]
+
+    assert not base_fname.startswith('.'), f'cannot save to hidden {base_fname=}'
 
     folder = os.path.dirname(filename)
 
     if not os.path.exists(folder):
         os.makedirs(folder, exist_ok=True)
 
-    base_fname = f'{folder}/{base_fname}'
     # Full filenames for the classifier and JSON sidecar
     clf_fname = f"{base_fname}.pkl.gz"
     json_fname = f"{base_fname}.json"
 
     # Save the classifier using joblib with compression
     clf_path = os.path.join(folder, clf_fname)
-    joblib.dump(clf, clf_path, compress=True)
+    joblib.dump(clf, clf_path, compress=('gzip', 9))
 
     if not save_json:
         assert metadata is None
@@ -333,6 +342,83 @@ def get_channel_importances(data_x, data_y, n_folds=5,
         accs.append(acc)
 
     return accs, np.mean(rankings, 0)
+
+
+def to_long_df(arr, columns=None, value_name='value', **col_labels):
+    """Convert an N-D numpy array to a long-format DataFrame; include only labeled dims.
+
+    Args:
+        arr: N-D numpy array.
+        columns: Sequence of dimension names; defaults to dim1..dimN.
+        value_name: Name for the values column.
+        **col_labels: For each dimension in `columns`, either
+            - a 1-D sequence of labels (length == size of that axis), producing one column
+              named as the dimension; or
+            - a dict mapping {output_col_name -> 1-D sequence of labels} to produce
+              multiple columns from the same axis (each sequence length must match axis size).
+
+    Returns:
+        DataFrame with columns [value_name, *labeled_columns], ordered by Fortran ('F') traversal.
+        Dimensions not present in `col_labels` are omitted.
+    """
+    arr = np.asarray(arr)
+    ndim = arr.ndim
+
+    if columns is None:
+        columns = [f'dim{i+1}' for i in range(ndim)]
+    elif len(columns) != ndim:
+        raise ValueError("len(columns) must match arr.ndim")
+
+    # Validate kwargs names early
+    unknown = set(col_labels).difference(columns)
+    if unknown:
+        raise KeyError(f"Unknown column(s) in col_labels: {sorted(unknown)}; valid names: {columns}")
+
+    # Fortran-order linearization to match arr.ravel('F')
+    n = arr.size
+    lin = np.arange(n)
+    coords = np.array(np.unravel_index(lin, arr.shape, order='F')).T  # (n, ndim)
+
+    # Assemble output
+    out_data = {value_name: arr.ravel('F')}
+    out_cols = [value_name]
+    used_colnames = set(out_cols)
+
+    for ax, dim_name in enumerate(columns):
+        if dim_name not in col_labels:
+            continue
+
+        spec = col_labels[dim_name]
+
+        # Single sequence ? one column named after the dimension
+        if not isinstance(spec, dict):
+            labels = np.asarray(spec)
+            if labels.ndim != 1 or labels.size != arr.shape[ax]:
+                raise ValueError(f"Labels for '{dim_name}' must be 1-D of length {arr.shape[ax]}")
+            out_name = dim_name
+            if out_name in used_colnames:
+                raise ValueError(f"Duplicate output column name: '{out_name}'")
+            out_data[out_name] = labels[coords[:, ax]]
+            out_cols.append(out_name)
+            used_colnames.add(out_name)
+            continue
+
+        # Dict ? multiple output columns
+        for out_name, labels in spec.items():
+            labels = np.asarray(labels)
+            if labels.ndim != 1 or labels.size != arr.shape[ax]:
+                raise ValueError(
+                    f"Labels for '{dim_name}.{out_name}' must be 1-D of length {arr.shape[ax]}"
+                )
+            if out_name in used_colnames:
+                raise ValueError(f"Duplicate output column name: '{out_name}'")
+            out_data[out_name] = labels[coords[:, ax]]
+            out_cols.append(out_name)
+            used_colnames.add(out_name)
+
+    return pd.DataFrame(out_data, columns=out_cols)
+
+
 
 
 class TimeEnsembleVoting(VotingClassifier):
