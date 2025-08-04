@@ -13,6 +13,7 @@ from sklearn.ensemble import VotingClassifier
 from tqdm import tqdm
 import warnings
 import inspect
+import itertools
 import numpy as np
 import pandas as pd
 import json
@@ -278,6 +279,79 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
     # Return results
     return (df, all_probas) if return_probas else df
 
+
+
+def decoding_heatmap_transfer(clf, data_x, data_y, test_x, test_y, range_t=None):
+    """
+    create a heatmap of decoding by varying training and testing time of
+    two independent samples
+    """
+    heatmap = np.zeros([data_x.shape[-1], test_x.shape[-1]])
+    for t_train in tqdm(range(data_x.shape[-1]), desc='train_predict'):
+        clf.fit(data_x[:, :, t_train], data_y)
+        for t_test in range(test_x.shape[-1]):
+            acc = (clf.predict(test_x[:, :, t_test]) == test_y).mean()
+            heatmap[t_train, t_test] = acc
+    return heatmap
+
+
+def decoding_heatmap_generalization(clf, data_x, data_y, ex_per_fold=4, n_jobs=8, range_t=None):
+    """
+
+    using cross validation, create a heatmap of decoding by varying training
+    and testing times
+
+    :param clf: classifier to use for creation of the heatmap
+    :param data_x: data to train on
+    :param data_y: data to test on
+    :param ex_per_fold: DESCRIPTION, defaults to 4
+    :param n_jobs: DESCRIPTION, defaults to 8
+    :param range_t: DESCRIPTION, defaults to None
+    :return: DESCRIPTION
+    :rtype: np.array of
+
+    """
+    assert (
+        len(set(np.bincount(data_y)).difference(set([0]))) == 1
+    ), "WARNING not each class has the same number of examples"
+    np.random.seed(0)
+    labels = np.unique(data_y)
+    idxs_tuples = np.array([np.where(data_y == cond)[0] for cond in labels]).T
+    idxs_tuples = [
+        idxs_tuples[i : i + ex_per_fold].ravel()
+        for i in range(0, len(idxs_tuples), ex_per_fold)
+    ]
+
+    if range_t is None:
+        range_t = np.arange(data_x.shape[-1])
+
+    tqdm_total = len(idxs_tuples) * (len(range_t) ** 2)
+    res = np.zeros([len(idxs_tuples), len(range_t), len(range_t)])
+
+    for i, idxs in enumerate(idxs_tuples):
+        idxs_train = ~np.in1d(range(data_x.shape[0]), idxs)
+        idxs_test = np.in1d(range(data_x.shape[0]), idxs)
+        train_x = data_x[idxs_train]
+        train_y = data_y[idxs_train]
+        test_x = data_x[idxs_test]
+        test_y = data_y[idxs_test]
+        params = list(itertools.product(range_t, range_t))
+        tqdm_initial = i * len(range_t) ** 2
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(train_predict)(
+                train_x[:, :, train_at],
+                train_y,
+                test_x[:, :, predict_at],
+                clf=clf,
+                # ova=False,
+            )
+            for train_at, predict_at in tqdm(
+                params, total=tqdm_total, initial=tqdm_initial
+            )
+        )
+        accs = np.mean(np.array(results) == test_y, -1)
+        res[i, :, :] = accs.reshape([len(range_t), len(range_t)])
+    return res.mean(0).squeeze()
 
 def train_predict(train_x, train_y, test_x, clf, neg_x=None, proba=False):
     """
