@@ -11,7 +11,10 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import warnings
-
+from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
+import imageio
+from io import BytesIO
 
 def _infer_layout(n_values):
     louts_dir = f'{mne.__path__[0]}/channels/data/layouts/'
@@ -221,6 +224,72 @@ def plot_sensors(
     ax.set_axis_off()
     ax.set_title(title)
     return plot
+
+def make_sensor_importance_gif(output_filename, data_x=None, data_y=None, importances=None,
+                               accuracies = None, layout='auto', tmin=None, tmax=None, n_jobs=-1, n_folds=10,
+                               fps=0.2):
+    from meg_utils import decoding
+    # Compute timepoints
+
+    if tmin is None or tmax is None:
+        timesteps = np.arange(data_x.shape[-1]) * 10 - 200
+    else:
+        timesteps = np.linspace(tmin*1000, tmax*1000, data_x.shape[-1], dtype=int)
+
+    assert (data_x is None) == (data_y is None), 'supply data_x or data_y or importances'
+    assert (data_x is None) or (importances is None), 'supply either data_x or importances'
+
+    # accuracies = None
+    # Compute importances for each timepoint
+    if importances is None:
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(decoding.get_channel_importances)(data_x[:, :, t], data_y, n_folds=n_folds)
+            for t in range(data_x.shape[-1])
+        )
+
+        accuracies = np.mean([r for r, _ in results], -1)  # accuracies
+        importances = [i for _, i in results]  # importances
+
+    vmin = np.min(importances)
+    vmax = np.max(importances)
+
+    image_buffers = []
+
+    if accuracies is None:
+        fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+    else:
+        mosaic = '\n'.join(['AAAA',
+                  'AAAA',
+                  'AAAA',
+                  'BBBB'])
+        fig, axs = plt.subplot_mosaic(mosaic, figsize=(6, 7))
+        ax = axs['A']
+        ax_acc = axs['B']
+        ax_acc.plot(timesteps, accuracies)
+        ax_acc.set_xlabel('time after stim onset')
+        ax_acc.vlines(0, *ax_acc.get_ylim(), color='black')
+        ax2 = ax_acc.twinx()
+
+
+    for tp_idx, tp in enumerate(timesteps):
+        imp = importances[tp_idx]
+
+        ax.clear()
+        ax.set_axis_off()
+        plot_sensors(imp, layout=layout, vmin=vmin, vmax=vmax, ax=ax)
+        ax.set_title(f'Sensor importance @ {tp} ms')
+
+        if accuracies is not None:
+            ax2.clear()
+            ax2.vlines(tp, *ax2.get_ylim(), color='red')
+
+        buf = BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        buf.seek(0)
+        image_buffers.append(imageio.v3.imread(buf))
+
+    # Save GIF
+    imageio.mimsave(output_filename, image_buffers, fps=fps)
 
 
 def circular_hist(ax, x, bins=16, density=True, offset=0, gaps=True,

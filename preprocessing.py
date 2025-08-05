@@ -10,6 +10,7 @@ import mne
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
+from sklearn.preprocessing import robust_scale as _robust_scale
 from .constants import idx_mag, idx_grad
 from autoreject import AutoReject, get_rejection_threshold, read_auto_reject
 
@@ -25,33 +26,6 @@ def rescale_meg_transform_outlier(arr):
     arr[arr < -1] *= 1e-2
     arr[arr > 1] *= 1e-2
     return arr
-
-
-def load_events(file, event_ids=None):
-    """retrieve event markers in chronological order from a mne readable file
-    Parameters
-    ----------
-    file : str
-        filepath of raw file, e.g. .fif or .edf.
-    event_ids : TYPE, optional
-        DESCRIPTION. The default is None.
-
-    Returns
-    -------
-    np.ndarray
-        mne.events array (n,3) -> (time, duration, event_id).
-
-    """
-
-    raw = mne.io.read_raw(file)
-    min_duration = 3/raw.info['sfreq'] # our triggers are ~5ms long
-    events = mne.find_events(raw, min_duration=min_duration,
-                                 consecutive=False, verbose='WARNING')
-    if event_ids is None:
-        event_ids = np.unique(events[:,2])
-    event_mask = [e in event_ids for e in events[:,2]]
-
-    return events[event_mask,:]
 
 
 def rescale_meg(arr):
@@ -128,6 +102,56 @@ def rescale_meg(arr):
 
     return arr.reshape(*orig_shape)
 
+
+def robust_scale_nd(arr, axis=None, with_centering=True, with_scaling=True,
+                    quantile_range=(25.0, 75.0), copy=True, unit_variance=False):
+    """Robust-scale an nD array along a specified axis using sklearn's robust_scale.
+
+    Args:
+        arr: Array-like of any shape.
+        axis: Axis along which to compute median/IQR. If None, scale over all elements.
+
+    Returns:
+        numpy.ndarray with the same shape as arr, robust-scaled along the given axis.
+    """
+
+    x = np.asarray(arr)
+
+    # Global scaling over all elements
+    if axis is None:
+        X = x.reshape(-1, 1)
+        Y = _robust_scale(X, axis=0, with_centering=with_centering,
+                         with_scaling=with_scaling, quantile_range=quantile_range,
+                         copy=copy, unit_variance=unit_variance)
+        return Y.reshape(x.shape)
+
+    # Normalize axis to be positive
+    axis = axis % x.ndim
+
+    # 1-D: scale over the only axis
+    if x.ndim == 1:
+        return _robust_scale(x.reshape(-1, 1), axis=0,
+                            with_centering=with_centering, with_scaling=with_scaling,
+                            quantile_range=quantile_range, copy=copy,
+                            unit_variance=unit_variance).reshape(x.shape)
+
+    # 2-D: delegate to sklearn with the chosen axis
+    if x.ndim == 2:
+        return _robust_scale(x, axis=axis, with_centering=with_centering,
+                            with_scaling=with_scaling, quantile_range=quantile_range,
+                            copy=copy, unit_variance=unit_variance)
+
+    # nD (n >= 3): flatten all non-target axes into columns, scale along the target axis
+    x_moved = np.moveaxis(x, axis, 0)
+    L = x_moved.shape[0]
+    X2d = x_moved.reshape(L, -1)
+
+    Y2d = _robust_scale(X2d, axis=0, with_centering=with_centering,
+                       with_scaling=with_scaling, quantile_range=quantile_range,
+                       copy=copy, unit_variance=unit_variance)
+
+    y_moved = Y2d.reshape(x_moved.shape)
+    return np.moveaxis(y_moved, 0, axis)
 
 def stratify(X, y, strategy='undersample', random_state=None, verbose=False):
     """Balance a dataset by over- or undersampling.
@@ -207,6 +231,37 @@ def sanity_check_ECG(raw, channels=["BIO001", "BIO002", "BIO003"]):
         np.argmin(stds.values()) == 0
     ), f"ERROR: {channels[0]} should be ECG, but did not have lowest STD: {stds}"
     return True
+
+
+def load_events(file, event_ids=None):
+    """retrieve event markers in chronological order from a mne readable file
+    Parameters
+    ----------
+    file : str
+        filepath of raw file, e.g. .fif or .edf.
+    event_ids : TYPE, optional
+        DESCRIPTION. The default is None.
+
+    Returns
+    -------
+    np.ndarray
+        mne.events array (n,3) -> (time, duration, event_id).
+
+    """
+
+    raw = mne.io.read_raw(file)
+    min_duration = 3/raw.info['sfreq'] # our triggers are ~5ms long
+    events = mne.find_events(raw, min_duration=min_duration,
+                                 consecutive=False, verbose='WARNING')
+    if event_ids is None:
+        event_ids = np.unique(events[:,2])
+    event_mask = [e in event_ids for e in events[:,2]]
+
+    return events[event_mask,:]
+
+
+
+
 
 def repair_epochs_autoreject(raw, epochs, ar_file, picks="meg"):
     """runs autorejec with default parameters on chosen picks

@@ -17,11 +17,13 @@ import itertools
 import numpy as np
 import pandas as pd
 import json
+import mne
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.base import clone, is_classifier
 from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
 from sklearn.ensemble._voting import process_routing, Bunch
 from sklearn.ensemble._voting import _fit_single_estimator
+
 
 try:
     from . import misc
@@ -491,6 +493,9 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
             used_colnames.add(out_name)
 
     return pd.DataFrame(out_data, columns=out_cols)
+
+
+
 
 
 
