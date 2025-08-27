@@ -495,7 +495,50 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
     return pd.DataFrame(out_data, columns=out_cols)
 
 
+def stratify(X, y, strategy='undersample', random_state=None, verbose=False):
+    """Balance a dataset by over- or undersampling.
 
+    Args:
+        X: Indexable container of samples (e.g., ndarray, DataFrame, mne.Epochs).
+        y: One-dimensional array-like of class labels, same length as ``X``.
+        strategy: Either ``'undersample'`` (downsample to minority size) or
+            ``'oversample'`` (upsample to majority size). Defaults to ``'undersample'``.
+        random_state: Seed for NumPy’s RNG. Defaults to ``None``.
+        verbose: If ``True``, prints target sample count per class. Defaults to ``False``.
+
+    Returns:
+        Tuple ``(X_balanced, y_balanced)`` with equal class representation.
+    """
+    y = np.asarray(y)
+    if y.ndim != 1:
+        raise ValueError("`y` must be 1-D class labels.")
+
+    rng = np.random.RandomState(random_state)
+
+    classes, counts = np.unique(y, return_counts=True)
+    idx_per_class = {cls: np.flatnonzero(y == cls) for cls in classes}
+
+    if strategy == 'undersample':
+        target_n = counts.min()
+    elif strategy == 'oversample':
+        target_n = counts.max()
+    else:
+        raise ValueError("`strategy` must be 'undersample' or 'oversample'.")
+
+    if verbose:
+        print(f"{strategy.capitalize()} to {target_n} samples per class.")
+
+    sampled_idx = []
+    for cls in classes:
+        idx = idx_per_class[cls]
+        replace = strategy == 'oversample' and len(idx) < target_n
+        sampled = rng.choice(idx, size=target_n, replace=replace)
+        sampled_idx.append(sampled)
+
+    sampled_idx = np.concatenate(sampled_idx)
+    rng.shuffle(sampled_idx)
+
+    return X[sampled_idx], y[sampled_idx]
 
 
 
