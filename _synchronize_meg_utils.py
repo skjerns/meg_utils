@@ -44,7 +44,7 @@ def pull_git_repo(repo_path):
     """Run 'git pull' in repo_path and return (success, output_or_error)."""
     try:
         result = subprocess.run(
-            ["git", "-C", repo_path, "pull"],
+            ["git", "-C", repo_path, "pull", "--stat"],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
