@@ -273,6 +273,80 @@ def get_ch_neighbours(ch_name, n=9, return_idx=False,
         layout.plot(picks=[list(positions).index(ch) for ch in chs_out])
     return sorted([ch_as_in_raw.index(ch) for ch in chs_out]) if return_idx else chs_out
 
+def to_long_df(arr, columns=None, value_name='value', **col_labels):
+    """Convert an N-D numpy array to a long-format DataFrame; include only labeled dims.
+
+    Args:
+        arr: N-D numpy array.
+        columns: Sequence of dimension names; defaults to dim1..dimN.
+        value_name: Name for the values column.
+        **col_labels: For each dimension in `columns`, either
+            - a 1-D sequence of labels (length == size of that axis), producing one column
+              named as the dimension; or
+            - a dict mapping {output_col_name -> 1-D sequence of labels} to produce
+              multiple columns from the same axis (each sequence length must match axis size).
+
+    Returns:
+        DataFrame with columns [value_name, *labeled_columns], ordered by Fortran ('F') traversal.
+        Dimensions not present in `col_labels` are omitted.
+    """
+    arr = np.asarray(arr)
+    ndim = arr.ndim
+
+    if columns is None:
+        columns = [f'dim{i+1}' for i in range(ndim)]
+    elif len(columns) != ndim:
+        raise ValueError("len(columns) must match arr.ndim")
+
+    # Validate kwargs names early
+    unknown = set(col_labels).difference(columns)
+    if unknown:
+        raise KeyError(f"Unknown column(s) in col_labels: {sorted(unknown)}; valid names: {columns}")
+
+    # Fortran-order linearization to match arr.ravel('F')
+    n = arr.size
+    lin = np.arange(n)
+    coords = np.array(np.unravel_index(lin, arr.shape, order='F')).T  # (n, ndim)
+
+    # Assemble output
+    out_data = {value_name: arr.ravel('F')}
+    out_cols = [value_name]
+    used_colnames = set(out_cols)
+
+    for ax, dim_name in enumerate(columns):
+        if dim_name not in col_labels:
+            continue
+
+        spec = col_labels[dim_name]
+
+        # Single sequence ? one column named after the dimension
+        if not isinstance(spec, dict):
+            labels = np.asarray(spec)
+            if labels.ndim != 1 or labels.size != arr.shape[ax]:
+                raise ValueError(f"Labels for '{dim_name}' must be 1-D of length {arr.shape[ax]}")
+            out_name = dim_name
+            if out_name in used_colnames:
+                raise ValueError(f"Duplicate output column name: '{out_name}'")
+            out_data[out_name] = labels[coords[:, ax]]
+            out_cols.append(out_name)
+            used_colnames.add(out_name)
+            continue
+
+        # Dict ? multiple output columns
+        for out_name, labels in spec.items():
+            labels = np.asarray(labels)
+            if labels.ndim != 1 or labels.size != arr.shape[ax]:
+                raise ValueError(
+                    f"Labels for '{dim_name}.{out_name}' must be 1-D of length {arr.shape[ax]}"
+                )
+            if out_name in used_colnames:
+                raise ValueError(f"Duplicate output column name: '{out_name}'")
+            out_data[out_name] = labels[coords[:, ax]]
+            out_cols.append(out_name)
+            used_colnames.add(out_name)
+
+    return pd.DataFrame(out_data, columns=out_cols)
+
 
 def low_priority():
     """ Set the priority of the process to below-normal (cross platform).
