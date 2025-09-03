@@ -13,6 +13,7 @@ import mne
 import hashlib
 import numpy as np
 import json
+import pandas as pd
 
 class NumpyEncoder(json.JSONEncoder):
     """ Special json encoder for numpy types """
@@ -274,22 +275,52 @@ def get_ch_neighbours(ch_name, n=9, return_idx=False,
     return sorted([ch_as_in_raw.index(ch) for ch in chs_out]) if return_idx else chs_out
 
 def to_long_df(arr, columns=None, value_name='value', **col_labels):
-    """Convert an N-D numpy array to a long-format DataFrame; include only labeled dims.
+    """
+    Convert an N-dimensional NumPy array to a long-format pandas DataFrame.
+    E.g. you have probabilities with (trial, timepoint, proba) but need a long
+    style dataframe for plotting with seaborn:
 
-    Args:
-        arr: N-D numpy array.
-        columns: Sequence of dimension names; defaults to dim1..dimN.
-        value_name: Name for the values column.
-        **col_labels: For each dimension in `columns`, either
-            - a 1-D sequence of labels (length == size of that axis), producing one column
-              named as the dimension; or
-            - a dict mapping {output_col_name -> 1-D sequence of labels} to produce
-              multiple columns from the same axis (each sequence length must match axis size).
+        probas = np.random.rand(16, 50, 10)
+        timepoints = np.arange(-100, 400, 10)
+        df = to_long_df(probas, columns=['trial', 'timepoint', 'proba'],
+                        value_name='probability', timepoint=timepoints)
 
-    Returns:
-        DataFrame with columns [value_name, *labeled_columns], ordered by Fortran ('F') traversal.
+    Only dimensions for which labels are provided are included in the output.
+    The array is linearized in Fortran ('F') order to determine the row order.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Input N-dimensional array to be reshaped into long format.
+    columns : sequence of str, optional
+        Names for each dimension of `arr`. If None (default), dimensions are
+        named "dim1", "dim2", ..., "dimN". Length must match `arr.ndim`.
+    value_name : str, default="value"
+        Name for the column containing array values.
+    **col_labels : dict of {str: (array-like or dict)}, optional
+        For each dimension name in `columns`, specify either:
+
+        - array-like (1-D, length == size of axis):
+          Creates a single output column with the same name as the dimension.
+
+        - dict of {str: array-like}:
+          Maps output column names to 1-D sequences of labels, each of length
+          equal to the axis size. This produces multiple columns derived from
+          the same axis.
+
+
+    Returns
+    -------
+    pandas.DataFrame
+        Long-format DataFrame with columns:
+
+        - `value_name`: Flattened values from `arr`.
+        - One or more labeled columns derived from `col_labels`.
+
+        Columns appear in the order `[value_name, *labeled_columns]`.
         Dimensions not present in `col_labels` are omitted.
     """
+
     arr = np.asarray(arr)
     ndim = arr.ndim
 
@@ -314,10 +345,12 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
     used_colnames = set(out_cols)
 
     for ax, dim_name in enumerate(columns):
-        if dim_name not in col_labels:
+        if dim_name=='_' or dim_name is None or dim_name==False:
             continue
-
-        spec = col_labels[dim_name]
+        elif dim_name in col_labels:
+            spec = col_labels[dim_name]
+        else:
+            spec = np.arange(arr.shape[ax])
 
         # Single sequence ? one column named after the dimension
         if not isinstance(spec, dict):
