@@ -356,7 +356,7 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
         if not isinstance(spec, dict):
             labels = np.asarray(spec)
             if labels.ndim != 1 or labels.size != arr.shape[ax]:
-                raise ValueError(f"Labels for '{dim_name}' must be 1-D of length {arr.shape[ax]}")
+                raise ValueError(f"Labels for '{dim_name}' must be 1-D of length {arr.shape[ax]} but is {labels.shape=}")
             out_name = dim_name
             if out_name in used_colnames:
                 raise ValueError(f"Duplicate output column name: '{out_name}'")
