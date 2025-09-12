@@ -23,7 +23,7 @@ from sklearn.base import clone, is_classifier
 from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
 from sklearn.ensemble._voting import process_routing, Bunch
 from sklearn.ensemble._voting import _fit_single_estimator
-from sklearn import metrics
+from sklearn import metrics as sk_metrics
 
 try:
     from . import misc
@@ -277,15 +277,17 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         
         if metric == "accuracy": 
             accuracy = (preds == test_y[:, None]).mean(axis=0)
-            
-        elif isinstance(metric, str):
-            
-            function_name = metric
-            
-            if not hasattr(metrics, function_name):
-                raise ValueError(f"sklearn.metrics has no function named '{function_name}'")
-            
-            func = getattr(metrics, function_name)
+        else:
+            # resolve metric function 
+            if isinstance(metric, str):
+                if not hasattr(sk_metrics, metric):
+                    raise ValueError(f"sklearn.metrics has no function named '{metric}'")
+                func = getattr(sk_metrics, metric)
+            elif callable(metric):
+                func = metric
+            else:
+                raise TypeError("metric must be 'accuracy', a sklearn.metrics name (str), or a callable.")
+    
             sig = inspect.signature(func)
             # add any extra parameters that are not preds and data_y
             if metric_kwargs:
