@@ -23,7 +23,7 @@ from sklearn.base import clone, is_classifier
 from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
 from sklearn.ensemble._voting import process_routing, Bunch
 from sklearn.ensemble._voting import _fit_single_estimator
-
+from sklearn import metrics
 
 try:
     from . import misc
@@ -154,7 +154,8 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                                  n_jobs=-2, plot_confmat=False, title_add="",
                                  ex_per_fold=2, simulate=False, subj="",
                                  tmin=-0.1, tmax=0.5, sfreq=100,
-                                 return_probas=False,
+                                 return_probas=False, metric='accuracy',
+                                 metric_kwargs={}, proba=True, 
                                  verbose=True):
     """
     Perform cross-validation across time on the given dataset.
@@ -187,6 +188,21 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         Milliseconds per time point. Default is 10.
     return_preds : bool, optional
         If True, return predictions along with the DataFrame. Default is False.
+    metric : str or function, optional
+        Scoring function used for model evaluation.
+        Either one of the scoring functions available from scikit-learn
+        (input needs to be string with name of the function, like 
+        "average_precision_score") or self-defined function. 
+        Default is "accuracy" (% correct predictions across folds)
+    proba: bool, optional
+        If True, predict_proba is used. If false, predict is used and class 
+        labels instead of probabilities are used as input to the metric function.
+        Choose depending on what kind of input the scoring function requires.
+    metric_kwargs: dict, optional 
+        extra parameters for the scoring function that are not 
+        predictions / probabilities and correct_labels. Possible inputs depend
+        on the scoring function that is chosen 
+        
 
     Returns
     -------
@@ -247,7 +263,7 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                 test_x=test_x[:, :, start],
                 neg_x=neg_x,
                 clf=clf,
-                proba=True
+                proba=proba
                 # ova=ova,
             )
             for start in list(range(0, time_max))
@@ -258,8 +274,30 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         all_probas[idxs_test] = probas
 
         preds = np.argmax(probas, -1)
-
-        accuracy = (preds == test_y[:, None]).mean(axis=0)
+        
+        if metric == "accuracy": 
+            accuracy = (preds == test_y[:, None]).mean(axis=0)
+            
+        elif isinstance(metric, str):
+            
+            function_name = metric
+            
+            if not hasattr(metrics, function_name):
+                raise ValueError(f"sklearn.metrics has no function named '{function_name}'")
+            
+            func = getattr(metrics, function_name)
+            sig = inspect.signature(func)
+            # add any extra parameters that are not preds and data_y
+            if metric_kwargs:
+                kwargs = {}
+                for k, v in metric_kwargs.items():
+                    if k in sig.parameters:
+                        kwargs[k] = v
+                        
+            # need to loop over timepoints 
+            accuracy = np.zeros(time_max)
+            for t in list(range(0, time_max)): 
+                accuracy[t] = func(data_y, all_probas[:,t], **kwargs)
 
         # Create a temporary DataFrame for the current fold
         df_temp = pd.DataFrame(
