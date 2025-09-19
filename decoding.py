@@ -298,16 +298,16 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                     raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs} ')
                         
             # need to loop over timepoints 
-            accuracy = np.zeros(time_max)
+            score = np.zeros(time_max)
             for t in list(range(0, time_max)): 
-                accuracy[t] = func(data_y, all_probas[:,t], **kwargs)
+                score[t] = func(data_y, all_probas[:,t], **metric_kwargs)
 
         # Create a temporary DataFrame for the current fold
         df_temp = pd.DataFrame(
             {"timepoint": times,
-             "fold": [j] * len(accuracy),
-             "accuracy": accuracy,
-             "subject": [subj] * len(accuracy),
+             "fold": [j] * len(score),
+             "score": score,
+             "subject": [subj] * len(score),
             }
         )
         # Concatenate the temporary DataFrame with the main DataFrame
