@@ -23,7 +23,7 @@ from sklearn.base import clone, is_classifier
 from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
 from sklearn.ensemble._voting import process_routing, Bunch
 from sklearn.ensemble._voting import _fit_single_estimator
-
+from sklearn import metrics as sk_metrics
 
 try:
     from . import misc
@@ -154,7 +154,8 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                                  n_jobs=-2, plot_confmat=False, title_add="",
                                  ex_per_fold=2, simulate=False, subj="",
                                  tmin=-0.1, tmax=0.5, sfreq=100,
-                                 return_probas=False,
+                                 return_probas=True, metric='accuracy',
+                                 metric_kwargs={}, 
                                  verbose=True):
     """
     Perform cross-validation across time on the given dataset.
@@ -187,6 +188,21 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         Milliseconds per time point. Default is 10.
     return_preds : bool, optional
         If True, return predictions along with the DataFrame. Default is False.
+    metric : str or function, optional
+        Scoring function used for model evaluation.
+        Either one of the scoring functions available from scikit-learn
+        (input needs to be string with name of the function, like 
+        "average_precision_score") or self-defined function. 
+        Default is "accuracy" (% correct predictions across folds)
+    proba: bool, optional
+        If True, predict_proba is used. If false, predict is used and class 
+        labels instead of probabilities are used as input to the metric function.
+        Choose depending on what kind of input the scoring function requires.
+    metric_kwargs: dict, optional 
+        extra parameters for the scoring function that are not 
+        predictions / probabilities and correct_labels. Possible inputs depend
+        on the scoring function that is chosen 
+        
 
     Returns
     -------
@@ -247,7 +263,7 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                 test_x=test_x[:, :, start],
                 neg_x=neg_x,
                 clf=clf,
-                proba=True
+                proba=return_probas
                 # ova=ova,
             )
             for start in list(range(0, time_max))
@@ -258,15 +274,41 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         all_probas[idxs_test] = probas
 
         preds = np.argmax(probas, -1)
-
-        accuracy = (preds == test_y[:, None]).mean(axis=0)
+        
+        if metric == "accuracy": 
+            func = sk_metrics.top_k_accuracy_score
+            metric_kwargs["k"]=1
+        else:
+            # resolve metric function 
+            if isinstance(metric, str):
+                if not hasattr(sk_metrics, metric):
+                    raise ValueError(f"sklearn.metrics has no function named '{metric}'")
+                func = getattr(sk_metrics, metric)
+            elif callable(metric):
+                func = metric
+            else:
+                raise TypeError("metric must be 'accuracy', a sklearn.metrics name (str), or a callable.")
+    
+            sig = inspect.signature(func)
+            # add any extra parameters that are not preds and data_y
+            if metric_kwargs:
+                sig = inspect.signature(func)
+                missing_kwargs = set(metric_kwargs).difference(sig.parameters)
+                if missing_kwargs:
+                    raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs} ')
+                        
+            # need to loop over timepoints 
+            score = np.zeros(time_max)
+            for t in list(range(0, time_max)): 
+                score[t] = func(data_y, all_probas[:,t], **metric_kwargs)
 
         # Create a temporary DataFrame for the current fold
         df_temp = pd.DataFrame(
             {"timepoint": times,
-             "fold": [j] * len(accuracy),
-             "accuracy": accuracy,
-             "subject": [subj] * len(accuracy),
+             "fold": [j] * len(score),
+             "score": score,
+             "metric_kwargs": str(metric_kwargs),
+             "subject": [subj] * len(score)
             }
         )
         # Concatenate the temporary DataFrame with the main DataFrame
