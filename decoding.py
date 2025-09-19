@@ -307,7 +307,8 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
             {"timepoint": times,
              "fold": [j] * len(score),
              "score": score,
-             "subject": [subj] * len(score),
+             "metric_kwargs": str(metric_kwargs),
+             "subject": [subj] * len(score)
             }
         )
         # Concatenate the temporary DataFrame with the main DataFrame
