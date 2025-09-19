@@ -154,8 +154,8 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                                  n_jobs=-2, plot_confmat=False, title_add="",
                                  ex_per_fold=2, simulate=False, subj="",
                                  tmin=-0.1, tmax=0.5, sfreq=100,
-                                 return_probas=False, metric='accuracy',
-                                 metric_kwargs={}, proba=True, 
+                                 return_probas=True, metric='accuracy',
+                                 metric_kwargs={}, 
                                  verbose=True):
     """
     Perform cross-validation across time on the given dataset.
@@ -263,7 +263,7 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                 test_x=test_x[:, :, start],
                 neg_x=neg_x,
                 clf=clf,
-                proba=proba
+                proba=return_probas
                 # ova=ova,
             )
             for start in list(range(0, time_max))
@@ -276,7 +276,8 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         preds = np.argmax(probas, -1)
         
         if metric == "accuracy": 
-            accuracy = (preds == test_y[:, None]).mean(axis=0)
+            func = sk_metrics.top_k_accuracy_score
+            metric_kwargs["k"]=1
         else:
             # resolve metric function 
             if isinstance(metric, str):
