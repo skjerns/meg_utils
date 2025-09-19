@@ -291,10 +291,10 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
             sig = inspect.signature(func)
             # add any extra parameters that are not preds and data_y
             if metric_kwargs:
-                kwargs = {}
-                for k, v in metric_kwargs.items():
-                    if k in sig.parameters:
-                        kwargs[k] = v
+                sig = inspect.signature(func)
+                missing_kwargs = set(metric_kwargs).difference(sig.parameters)
+                if missing_kwargs:
+                    raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs} ')
                         
             # need to loop over timepoints 
             accuracy = np.zeros(time_max)
