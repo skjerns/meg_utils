@@ -290,24 +290,25 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                 raise TypeError("metric must be 'accuracy', a sklearn.metrics name (str), or a callable.")
     
             sig = inspect.signature(func)
-            # add any extra parameters that are not preds and data_y
-            if metric_kwargs:
-                sig = inspect.signature(func)
-                missing_kwargs = set(metric_kwargs).difference(sig.parameters)
-                if missing_kwargs:
-                    raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs} ')
-                        
-            # need to loop over timepoints 
-            score = np.zeros(time_max)
-            for t in list(range(0, time_max)): 
-                score[t] = func(data_y, all_probas[:,t], **metric_kwargs)
+        # add any extra parameters that are not preds and data_y
+        if metric_kwargs:
+            sig = inspect.signature(func)
+            missing_kwargs = set(metric_kwargs).difference(sig.parameters)
+            if missing_kwargs:
+                raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs} ')
+                    
+        # need to loop over timepoints 
+        score = np.zeros(time_max)
+        print(func)
+        for t in list(range(0, time_max)): 
+            score[t] = func(data_y, all_probas[:,t], **metric_kwargs)
 
         # Create a temporary DataFrame for the current fold
         df_temp = pd.DataFrame(
             {"timepoint": times,
              "fold": [j] * len(score),
              "score": score,
-             "metric_kwargs": str(metric_kwargs),
+             "metric_used": str(func) * len(score),
              "subject": [subj] * len(score)
             }
         )
