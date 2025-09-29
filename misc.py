@@ -5,6 +5,7 @@ Created on Mon Oct 21 10:21:26 2024
 @author: Simon Kern (@skjerns)
 """
 import os
+import sys
 from pathlib import Path
 from collections import namedtuple
 from natsort import natsort_key
@@ -14,6 +15,11 @@ import hashlib
 import numpy as np
 import json
 import pandas as pd
+import time
+import inspect
+import traceback
+from functools import wraps
+from html import escape as _esc
 
 class NumpyEncoder(json.JSONEncoder):
     """ Special json encoder for numpy types """
@@ -407,3 +413,91 @@ def low_priority():
         import os
 
         os.nice(5)
+
+
+def telegram_callback(on_begin=False, on_finish=False, on_error=True, parse_mode='HTML'):
+    """Decorator to notify via telegram_send at begin/finish/error.
+    Args:
+        on_begin: Send when function starts.
+        on_finish: Send when function ends.
+        on_error: Send on exception with traceback.
+        parse_mode: 'HTML' or 'Markdown'.
+    """
+    def decorator(func):
+        func_name = func.__name__
+        mod = inspect.getmodule(func)
+        script_path = getattr(mod, '__file__', None) or sys.argv[0] or '<interactive>'
+        script_name = os.path.basename(script_path)
+
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            t0 = time.time()
+            if on_begin:
+                msg = (
+                    f"<b>{_esc(func_name)}</b> in {_esc(script_name)} began"
+                    if parse_mode.upper() == 'HTML'
+                    else f"*{func_name}* in {script_name} began"
+                )
+                _safe_send(msg, parse_mode)
+
+            try:
+                result = func(*args, **kwargs)
+            except Exception as e:
+                if on_error:
+                    elapsed = _fmt_duration(time.time() - t0)
+                    if parse_mode.upper() == 'HTML':
+                        tb = _esc(traceback.format_exc())
+                        err = _esc(f"{e.__class__.__name__}: {e}")
+                        msg = (
+                            f"<b>{_esc(func_name)}</b> in {_esc(script_name)} errored after {_esc(elapsed)}\n"
+                            f"<code>{err}</code>\n<code>{tb}</code>"
+                        )
+                    else:
+                        tb = traceback.format_exc()
+                        msg = (
+                            f"*{func_name}* in {script_name} errored after {elapsed}\n"
+                            f"```\n{e.__class__.__name__}: {e}\n{tb}\n```"
+                        )
+                    _safe_send(msg, parse_mode)
+                raise
+            else:
+                if on_finish:
+                    elapsed = _fmt_duration(time.time() - t0)
+                    msg = (
+                        f"<b>{_esc(func_name)}</b> in {_esc(script_name)} finished after {_esc(elapsed)}"
+                        if parse_mode.upper() == 'HTML'
+                        else f"*{func_name}* in {script_name} finished after {elapsed}"
+                    )
+                    _safe_send(msg, parse_mode)
+                return result
+
+        return wrapped
+    return decorator
+
+
+def _safe_send(msg, parse_mode):
+    """Send message; never raise if telegram_send fails."""
+    import telegram_send
+    try:
+        telegram_send.send(messages=[msg], parse_mode=parse_mode)
+    except ModuleNotFoundError as e:
+        print('telegram_send not found, please install via pip')
+    except Exception:
+        try:
+            telegram_send.send(messages=[msg])
+        except Exception:
+            pass
+
+
+def _fmt_duration(seconds):
+    """Return human-readable duration."""
+    seconds = float(seconds)
+    if seconds < 60:
+        s = int(round(seconds))
+        return f"{s} second" if s == 1 else f"{s} seconds"
+    if seconds < 3600:
+        m = int(round(seconds / 60))
+        return f"{m} minute" if m == 1 else f"{m} minutes"
+    h = seconds / 3600.0
+    h_disp = f"{h:.1f}" if h < 10 else f"{int(round(h))}"
+    return f"{h_disp} hour" if float(h_disp) == 1.0 else f"{h_disp} hours"
