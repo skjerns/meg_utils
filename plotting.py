@@ -512,6 +512,8 @@ def normalize_lims(axs, which='xy'):
             'x'  -> xlim
             'y'  -> ylim
             'v'  -> color limits (clim) of the most recently added image on each Axes.
+            'z'  -> synonym of v.
+            'c'  -> synonym of v.
         Combinations are allowed by concatenation (e.g., 'xy', 'xv', 'yv', 'xyv').
         Back-compat: 'both' == 'xy'.
         Convenience: 'all'  == 'xyv'.
@@ -526,6 +528,14 @@ def normalize_lims(axs, which='xy'):
     # Flatten / normalize the axes input to a simple list.
     if hasattr(axs, 'flat'):  # numpy array of Axes
         axs = [ax for ax in axs.flat]
+
+    for axis in which:
+        if not axis in 'xyzvc':
+            raise ValueError(f'Unknown {axis=} in parameter which, only allowed are xyzvc, with v==z')
+
+    # z is synonym with v
+    which = which.replace('z', 'v')
+    which = which.replace('c', 'v')
 
     spec = which.lower()
     if spec == 'both':
@@ -554,28 +564,44 @@ def normalize_lims(axs, which='xy'):
 
     # --- Color limits (v) ---
     if 'v' in spec:
-        vmins = []
-        vmaxs = []
-        for ax in axs:
-            if not ax.images:
-                continue
-            im = ax.images[-1]  # most recently added image
-            try:
-                arr = np.asarray(im.get_array())
-                vmins.append(np.nanmin(arr))
-                vmaxs.append(np.nanmax(arr))
-            except Exception:
-                v0, v1 = im.get_clim()
-                vmins.append(v0)
-                vmaxs.append(v1)
-        if vmins:  # at least one image across all axes
-            vmin = min(vmins)
-            vmax = max(vmaxs)
-            for ax in axs:
-                if not ax.images:
-                    continue
-                ax.images[-1].set_clim(vmin, vmax)
+        # Gather all scalar-mappables and their data-driven mins/maxs
+        def mappables(ax):
+            items = []
+            items.extend(ax.images)  # imshow, matshow
+            # pcolormesh/quadmesh, scatter with array, etc.
+            items.extend([c for c in ax.collections if hasattr(c, 'get_array') and c.get_array() is not None])
+            # contourf returns a ContourSet; treat its collections together via its mappable API if present
+            # Many ContourSets store a ScalarMappable-like norm and array on the first collection.
+            return items
 
+        vmins, vmaxs = [], []
+        per_ax_mappables = []
+        for ax in axs:
+            mapps = mappables(ax)
+            per_ax_mappables.append(mapps)
+            for m in mapps:
+                try:
+                    arr = np.asarray(m.get_array())
+                    vmins.append(np.nanmin(arr))
+                    vmaxs.append(np.nanmax(arr))
+                except Exception:
+                    try:
+                        v0, v1 = m.get_clim()
+                        vmins.append(v0); vmaxs.append(v1)
+                    except Exception:
+                        pass
+
+        if vmins:
+            vmin = np.nanmin(vmins)
+            vmax = np.nanmax(vmaxs)
+            # Avoid degenerate range
+            if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+                return
+            for ax, mapps in zip(axs, per_ax_mappables):
+                for m in mapps:
+                    # Works for Normalize/LogNorm; BoundaryNorm may need more bespoke handling
+                    m.set_clim(vmin, vmax)
+                    # m.changed() is called by set_clim internally; keeps colorbars in sync
     return
 
 
