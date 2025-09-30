@@ -19,6 +19,7 @@ import pandas as pd
 import json
 import mne
 import misc
+import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.base import clone, is_classifier
 from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
@@ -209,7 +210,6 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
     # Ensure each class has the same number of examples
     assert (len(set(np.bincount(data_y)).difference(set([0]))) == 1), \
         "WARNING not each class has the same number of examples"
-    # warnings.warn('RETURN THIS')
     # Set random seed based on subject ID for reproducibility
     np.random.seed(misc.string_to_seed(subj))
 
@@ -229,7 +229,7 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
     tqdm_loop = tqdm(total=total, desc=f"CV Fold {subj}", disable=not verbose)
     df = pd.DataFrame()
 
-    # Initialize array to store all predictions
+    # Initialize array to store the probabilities for each class
     all_results = np.zeros([len(data_y), time_max, len(labels)])
 
     times = np.linspace(tmin*1000, tmax*1000, time_max).round()
@@ -249,11 +249,12 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         # Add null data if specified
         neg_x = np.hstack(train_x[:, :, 0:1].T).T if add_null_data else None
         
+        # determine scoring method 
         if metric == "accuracy": 
             func = sk_metrics.top_k_accuracy_score
-            needs_probas = False
+            metric_kwargs={"k":1, "labels": labels}
+            needs_probas = True
         else:
-            # resolve metric function 
             if isinstance(metric, str):
                 if not hasattr(sk_metrics, metric):
                     raise ValueError(f"sklearn.metrics has no function named '{metric}'")
@@ -262,24 +263,11 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
                 func = metric
             else:
                 raise TypeError("metric must be 'accuracy', a sklearn.metrics name (str), or a callable.")
-        
+                        
             # Determine if metric function expects probabilities or predictions. 
             sig = inspect.signature(func)
             inputs_names = list(sig.parameters)
         
-            # try:
-            #    scorer = sk_metrics.get_scorer(metric)
-            # # Check if scorer has _response_method attribute
-            #    if hasattr(scorer, '_response_method'):
-            #         if scorer._response_method == 'predict_proba':
-            #             needs_probas=True
-            #         elif scorer._response_method == 'predict':
-            #             needs_probas=False
-            #         print(needs_probas, (scorer._response_method))
-              
-            # except: 
-            #     print("using get_scorer not possible")
-                
             second_param = inputs_names[1]
             prob_indicators = ['y_score', 'probas_pred', 'y_proba']  
             pred_indicators = ['y_pred', 'labels_pred']
@@ -290,11 +278,11 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
             else:
                 print("determining response method not possible")
 
-        # add any extra parameters that are not preds and data_y
-        if metric_kwargs:
-            missing_kwargs = set(list(metric_kwargs)).difference(inputs_names)
-            if missing_kwargs:
-                raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs} ')
+            # add any extra parameters that are not preds and data_y
+            if metric_kwargs:
+                missing_kwargs = set(list(metric_kwargs)).difference(inputs_names)
+                if missing_kwargs:
+                    raise ValueError(f'The following metric_kwargs were given but are not part of the function signature {missing_kwargs}')
         
         results_preds = Parallel(n_jobs=n_jobs)(
         delayed(train_predict)(
@@ -309,18 +297,23 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
         )
         
         results_swp = np.swapaxes(results_preds, 0, 1)
-        # Store probabilities
+        
+        # store results for each fold together
         all_results[idxs_test] = results_swp
-        # preds = np.argmax(probas, -1)
-      
+        
+        # convert probabilities to prediction if necessary 
+        if not needs_probas:
+           preds_idx = np.argmax(all_results, axis=2)              
+           preds_lbl = labels[preds_idx] 
+                     
+
+        # compute scoring metric 
         score = np.zeros(time_max)
-        # need to loop over timepoints 
         for t in list(range(0, time_max)): 
             if needs_probas:
                 score[t] = func(data_y, all_results[:,t], **metric_kwargs)
             else:
-                #preds_t = np.argmax(all_probas[:,t], -1)
-                score[t] = func(data_y, all_results[:,t], **metric_kwargs)
+                score[t] = func(data_y, preds_lbl[:,t], **metric_kwargs)
 
         # Create a temporary DataFrame for the current fold
         df_temp = pd.DataFrame(
