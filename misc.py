@@ -4,7 +4,6 @@ Created on Mon Oct 21 10:21:26 2024
 
 @author: Simon Kern (@skjerns)
 """
-import os
 import sys
 from pathlib import Path
 from collections import namedtuple
@@ -66,12 +65,13 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
 
     if isinstance(exts, str): exts = [exts]
     if isinstance(patterns, str): patterns = [patterns]
-    assert isinstance(path, str), "path needs to be a str"
-    assert os.path.exists(path), 'Path {} does not exist'.format(path)
+
+    p = Path(path)
+    assert p.exists(), f'Path {path} does not exist'
     if patterns is None: patterns = []
     if exts is None: exts = []
 
-    if patterns==[] and exts == []:
+    if not patterns and not exts:
         patterns = ['*']
 
     for ext in exts:
@@ -88,19 +88,28 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
     for pattern in patterns:
         if not case_sensitive:
             pattern = insensitive_glob(pattern)
-        for filename in Path(path).glob(pattern):
+        for filename in p.glob(pattern):
             if filename.is_file() and filename not in files:
+                if only_folders:
+                    continue
+                files.append(filename)
+                fcount += 1
+                if max_results is not None and max_results<=fcount:
+                    break
+            elif filename.is_dir() and only_folders and filename not in files:
                 files.append(filename)
                 fcount += 1
                 if max_results is not None and max_results<=fcount:
                     break
 
-    # turn path into relative or absolute paths
-    files = [file.relative_to(path) if relative else file.absolute() for file in files]
-    files = [os.path.join(file) for file in files]
 
-    files = set(files)  # filter duplicates
+    # turn path into relative or absolute paths
+    if relative:
+        files = [file.relative_to(p) for file in files]
+
     # by default: return strings instead of Path objects
+    files = [str(file) for file in files]
+    files = set(files)  # filter duplicates
     return sorted(files, key=natsort_key)
 
 def choose_file(default_dir=None, default_file=None, exts='txt',
@@ -427,7 +436,7 @@ def telegram_callback(on_begin=False, on_finish=False, on_error=True, parse_mode
         func_name = func.__name__
         mod = inspect.getmodule(func)
         script_path = getattr(mod, '__file__', None) or sys.argv[0] or '<interactive>'
-        script_name = os.path.basename(script_path)
+        script_name = Path(script_path).name
 
         @wraps(func)
         def wrapped(*args, **kwargs):
