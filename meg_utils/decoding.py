@@ -50,9 +50,86 @@ def is_json_serializable(obj):
         return False
 
 
-def reduce_dimensions_pca(data, axis, n_components):
+class _PCAReducer:
     """
-    PCA reduction along a specified axis.
+    Apply a fitted PCA along a specific axis of arbitrarily-shaped arrays.
+
+    Parameters
+    ----------
+    pca : sklearn.decomposition.PCA
+        Fitted PCA.
+    axis : int
+        Axis that holds features.
+    feature_size : int
+        Size of the original feature axis.
+    """
+    def __init__(self, pca, axis, feature_size):
+        self.pca = pca
+        self.axis = axis
+        self.feature_size = int(feature_size)
+        self.n_components_ = pca.n_components_
+        self.components_ = pca.components_
+        self.explained_variance_ratio_ = pca.explained_variance_ratio_
+        self.mean_ = pca.mean_
+
+    def _ax(self, A):
+        return self.axis % A.ndim
+
+    def transform(self, data):
+        """
+        Transform new data with the same feature size along the configured axis.
+
+        Parameters
+        ----------
+        data : array_like
+            Input array; the size along `axis` must equal feature_size.
+
+        Returns
+        -------
+        Xr : ndarray
+            Data with the feature axis replaced by n_components_.
+        """
+        A = np.asarray(data)
+        ax = self._ax(A)
+        if A.shape[ax] != self.feature_size:
+            raise ValueError(f"Expected feature axis size {self.feature_size}, got {A.shape[ax]}.")
+        Z = np.ascontiguousarray(np.moveaxis(A, ax, -1))
+        X = Z.reshape(-1, Z.shape[-1])
+        Yr = self.pca.transform(X)
+        k = self.n_components_
+        Zr = Yr.reshape(Z.shape[:-1] + (k,))
+        return np.moveaxis(Zr, -1, ax)
+
+    def inverse_transform(self, reduced):
+        """
+        Reconstruct back to original feature space along the configured axis.
+
+        Parameters
+        ----------
+        reduced : array_like
+            Array whose size along `axis` equals n_components_.
+
+        Returns
+        -------
+        Xrec : ndarray
+            Array with the feature axis restored to feature_size.
+        """
+        R = np.asarray(reduced)
+        ax = self._ax(R)
+        if R.shape[ax] != self.n_components_:
+            raise ValueError(f"Expected reduced axis size {self.n_components_}, got {R.shape[ax]}.")
+        Z = np.ascontiguousarray(np.moveaxis(R, ax, -1))
+        X = Z.reshape(-1, Z.shape[-1])
+        Xfull = self.pca.inverse_transform(X)
+        Zfull = Xfull.reshape(Z.shape[:-1] + (self.feature_size,))
+        return np.moveaxis(Zfull, -1, ax)
+
+    __call__ = transform
+
+
+def reduce_dimensions(data, axis, n_components, **pca_kwargs):
+    """
+    Fit PCA along a specified axis and return reduced data and a callable transformer.
 
     Parameters
     ----------
@@ -61,20 +138,20 @@ def reduce_dimensions_pca(data, axis, n_components):
     axis : int
         Axis to reduce (treated as feature dimension).
     n_components : int or float
-        If int: number of components (1..min(n_samples, n_features)).
+        If int: number of PCs (1..min(n_samples, n_features)).
         If float in (0, 1]: target explained-variance ratio.
 
     Returns
     -------
     Xr : ndarray
-        Array with the specified axis replaced by the reduced components.
-    pca : sklearn.decomposition.PCA
-        Fitted PCA object.
+        Array with the specified axis replaced by reduced components.
+    reducer : PCAReducer
+        Callable object for transforming new arrays of compatible shape.
 
     Raises
     ------
     ValueError
-        If inputs are invalid or not enough samples.
+        On invalid inputs.
     """
     A = np.asarray(data)
     if A.ndim < 2:
@@ -92,27 +169,32 @@ def reduce_dimensions_pca(data, axis, n_components):
     else:
         raise ValueError("n_components must be int or float in (0, 1].")
 
-    Z = np.moveaxis(A, ax, -1)                  # (..., F)
-    Z = np.ascontiguousarray(Z)
-    X = Z.reshape(-1, F)                        # (n_samples, n_features)
+    Z = np.ascontiguousarray(np.moveaxis(A, ax, -1))   # (..., F)
+    X = Z.reshape(-1, F)                                # (n_samples, F)
     n_samples = X.shape[0]
-
     if n_samples < 2:
-        raise ValueError("At least 2 samples required across non-reduced axes.")
+        raise ValueError("At least 2 samples required across non-feature axes.")
 
     if isinstance(n_components, (int, np.integer)):
         max_allowed = min(n_samples, F)
         if n_components > max_allowed:
             raise ValueError(f"n_components={n_components} exceeds min(n_samples, n_features)={max_allowed}.")
 
-    pca = PCA(n_components=n_components, svd_solver='full')
-    Xr_flat = pca.fit_transform(X)              # (n_samples, k)
+    # try solvers, we have enough memory, so overwrite default PCA behaviour
+    for solver in ['covariance_eigh', 'randomized', 'arpack', 'full']:
+        try:
+            pca = PCA(n_components=n_components, svd_solver=solver)
+            Xr_flat = pca.fit_transform(X)
+            break
+        except ValueError:
+            continue
     k = pca.n_components_
+    Zr = Xr_flat.reshape(Z.shape[:-1] + (k,))
+    Xr = np.moveaxis(Zr, -1, ax)
 
-    Xr = Xr_flat.reshape(Z.shape[:-1] + (k,))   # (..., k)
-    Xr = np.moveaxis(Xr, -1, ax)                # restore axis position
+    reducer = _PCAReducer(pca=pca, axis=axis, feature_size=F)
+    return Xr, reducer
 
-    return Xr, pca
 
 def save_clf(clf, filename, save_json=True, metadata=None):
     """
