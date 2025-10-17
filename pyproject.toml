@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meg_utils"
+version = "0.1.0"
+authors = [
+  { name="Simon Kern", email="simon.kern@zi-mannheim.de" },
+]
+description = "A collection of utility functions for MEG analysis."
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "autoreject",
+    "joblib",
+    "matplotlib",
+    "mne",
+    "natsort",
+    "numpy",
+    "pandas",
+    "pyEDFlib",
+    "scikit_learn",
+    "scipy",
+    "seaborn",
+    "tqdm",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/simon-kern/meg_utils"
