@@ -264,6 +264,30 @@ def hash_md5(input_string, length=8):
     md5_hash = hashlib.md5(input_bytes).hexdigest()
     return md5_hash[:length]
 
+
+def make_seed(*args):
+    """
+    Generate a deterministic, high-entropy seed from variable inputs using SHA-256.
+
+    Parameters
+    ----------
+    *args : any
+        Variable length list of inputs (ints, strings, floats) to combine.
+
+    Returns
+    -------
+    int
+        A 32-bit integer suitable for PRNG seeding.
+    """
+    # Use a delimiter to prevent collisions between (1, 23) and (12, 3)
+    data = "_".join(str(arg) for arg in args).encode('utf-8')
+
+    digest = hashlib.sha256(data).hexdigest()
+
+    # Clip to 32-bit unsigned integer range
+    return int(digest, 16) % (2**32)
+
+
 def get_ch_neighbours(ch_name, n=9, return_idx=False,
                       layout_name='Vectorview-all', plot=False):
     """retrieve the n neighbours of a given MEG channel location.
@@ -342,7 +366,7 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
     if columns is None:
         columns = [f'dim{i+1}' for i in range(ndim)]
     elif len(columns) != ndim:
-        raise ValueError("len(columns) must match arr.ndim")
+        raise ValueError(f"{len(columns)=} must match {arr.ndim=}")
 
     # Validate kwargs names early
     unknown = set(col_labels).difference(columns)

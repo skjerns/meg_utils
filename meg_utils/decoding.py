@@ -806,11 +806,11 @@ class TimeEnsembleVoting(VotingClassifier):
 
 
 class LogisticRegressionOvaNegX(LogisticRegression):
-    """one vs all logistic regression classifier including negative examples.
+    """
+    One-vs-all logistic regression with explicit negative samples.
 
-    Under the hood, one separate LogisticRegression is trained per class.
-    The LogReg is trained using positive examples (inclass) and negative
-    examples (outclass + nullclass).
+    Trains one binary LogisticRegression per class using in-class positives
+    and out-of-class plus optional external negatives.
     """
 
     def __init__(
@@ -821,7 +821,27 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         solver="liblinear",
         max_iter=1000,
         neg_x_ratio=1.0,
+        rng=0,
     ):
+        """
+        Parameters
+        ----------
+        base_clf : classifier or None
+            Base binary classifier to clone per class. If None, a
+            LogisticRegression is constructed from the remaining parameters.
+        penalty : str
+            Regularization penalty passed to LogisticRegression.
+        C : float
+            Inverse regularization strength.
+        solver : str
+            Optimization solver for LogisticRegression.
+        max_iter : int
+            Maximum number of solver iterations.
+        neg_x_ratio : float
+            Ratio of external negative samples relative to |X| used per class.
+        rng : int or numpy.random.Generator
+            Seed or generator for negative-sample subsampling.
+        """
         self.base_clf = None if base_clf is None else base_clf  # just for __repr__
 
         if base_clf is None:
@@ -830,16 +850,20 @@ class LogisticRegressionOvaNegX(LogisticRegression):
                 C=C,
                 solver=solver,
                 max_iter=max_iter,
+                random_state = 0  # will be overwritten later anyway
                 # multi_class="ovr",
             )
         assert is_classifier(
             base_clf
         ), f"Must supply classifier, but supplied {base_clf}"
+
         self.base_clf_ = base_clf
         self.neg_x_ratio = neg_x_ratio
         self.C = C
         self.max_iter = max_iter
         self.solver = solver
+        self.rng = np.random.default_rng(rng)
+
         # self.n_pca = n_pca
         LogisticRegression.__init__(
             self,
@@ -851,6 +875,25 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         )
 
     def fit(self, X, y, neg_x=None, neg_x_ratio=None):
+        """
+        Fit one binary classifier per class.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Training feature matrix.
+        y : array-like, shape (n_samples,)
+            Class labels.
+        neg_x : array-like or None, shape (n_neg, n_features)
+            External negative samples added to each one-vs-all problem.
+        neg_x_ratio : float or None
+            Overrides instance neg_x_ratio for this fit call.
+
+        Returns
+        -------
+        self
+            Fitted estimator.
+        """
         # if self.n_pca is not None:
         #     self.pca = PCA(self.n_pca)
         #     X = self.pca.fit_transform(X)
@@ -863,14 +906,15 @@ class LogisticRegressionOvaNegX(LogisticRegression):
 
         for class_ in self.classes_:
             clf = clone(self.base_clf_)
+            clf.set_params(random_state=self.rng.integers(2**32-1))
             idx_class = y == class_
             true_x = X[idx_class]
             false_x = X[~idx_class]
 
             if neg_x is not None:
                 n_null = int(len(X) * neg_x_ratio)
-                replace = len(neg_x) < n_null
-                idx_neg = np.random.choice(len(neg_x), size=n_null, replace=replace)
+                assert len(neg_x) >= n_null, f'{n_null=} requested ({neg_x_ratio=}), but only {len(neg_x)=} samples given'
+                idx_neg = self.rng.choice(len(neg_x), size=n_null, replace=False)
                 false_x = np.vstack([false_x, neg_x[idx_neg]])
 
             data_x = np.vstack([true_x, false_x])
@@ -888,6 +932,19 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         return self
 
     def predict_proba(self, X):
+        """
+        Predict per-class probabilities.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input feature matrix.
+
+        Returns
+        -------
+        proba : ndarray, shape (n_samples, n_classes)
+            Positive-class probabilities from each binary model.
+        """
         # if self.n_pca is not None:
         #     X = self.pca.transform(X)
         proba = []
