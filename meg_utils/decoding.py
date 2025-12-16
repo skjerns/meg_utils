@@ -874,6 +874,9 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             # multi_class="ovr",
         )
 
+    def reset_random_state(self, rng=0):
+        self.rng = np.random.default_rng(rng)
+
     def fit(self, X, y, neg_x=None, neg_x_ratio=None):
         """
         Fit one binary classifier per class.
