@@ -846,11 +846,11 @@ class LogisticRegressionOvaNegX(LogisticRegression):
 
         if base_clf is None:
             base_clf = LogisticRegression(
-                penalty=penalty,
+                l1_ratio=1.0 if penalty=='l1' else 0.0,
                 C=C,
                 solver=solver,
                 max_iter=max_iter,
-                random_state = 0  # will be overwritten later anyway
+                random_state = 0,  # will be overwritten later anyway
                 # multi_class="ovr",
             )
         assert is_classifier(
@@ -887,7 +887,9 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             Training feature matrix.
         y : array-like, shape (n_samples,)
             Class labels.
-        neg_x : array-like or None, shape (n_neg, n_features)
+        neg_x : array-like or None, shape (n_neg, n_features) or 3d
+            if 3d array is given it is assumed to be (n_trial, n_features, n_time)
+            and samples will be drawn trial-balanced
             External negative samples added to each one-vs-all problem.
         neg_x_ratio : float or None
             Overrides instance neg_x_ratio for this fit call.
@@ -915,10 +917,28 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             false_x = X[~idx_class]
 
             if neg_x is not None:
-                n_null = int(len(X) * neg_x_ratio)
-                assert len(neg_x) >= n_null, f'{n_null=} requested ({neg_x_ratio=}), but only {len(neg_x)=} samples given'
-                idx_neg = self.rng.choice(len(neg_x), size=n_null, replace=False)
-                false_x = np.vstack([false_x, neg_x[idx_neg]])
+                # this is how much null data we want
+                n_null = int(len(false_x) * neg_x_ratio)
+
+                # make 3d to have same algorithm for both cases
+                if neg_x.ndim==2:
+                    neg_x = np.reshape(neg_x.T, [-1, *neg_x.T.shape])
+
+                # first selector is for the trial we sample from
+                # to assert that all trials are presented roughly equally
+                idx_trial = np.arange(n_null) % len(neg_x)
+
+                # next we chose the timepoint from which we want to sample
+                # or in case of 2d array, the sample which will be taken
+                # this is a really ugly solution but I'm under time pressure
+                takex = dict(zip(*np.unique(idx_trial, return_counts=True)))
+                neg_trials = []
+                for idx, n in takex.items():
+                    sel = self.rng.choice(neg_x.shape[-1], n, replace=False)
+                    neg_trials.extend(neg_x[idx, :, sel])
+
+                assert len(neg_trials)==n_null, 'sanity check failed'
+                false_x = np.vstack([false_x, neg_trials])
 
             data_x = np.vstack([true_x, false_x])
             data_y = np.hstack([np.ones(len(true_x)), np.zeros(len(false_x))])
