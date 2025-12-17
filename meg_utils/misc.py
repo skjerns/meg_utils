@@ -31,6 +31,18 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
 
+
+class Stop(KeyboardInterrupt):
+    """gracefully exit a script and return to REPL without traceback
+
+    usage:
+        raise StopExecution
+    """
+    def _render_traceback_(self):
+        print('Script execution stopped: ', self, end='')
+        return []  # returning an empty list prevents the TypeError
+
+
 def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
                subfolders=None, only_folders=False, max_results=None,
                case_sensitive=False):
@@ -280,7 +292,11 @@ def make_seed(*args):
         A 32-bit integer suitable for PRNG seeding.
     """
     # Use a delimiter to prevent collisions between (1, 23) and (12, 3)
-    data = "_".join(str(arg) for arg in args).encode('utf-8')
+    data = b"".join(
+        f"{type(a).__name__}:{len(s)}:".encode("utf-8") + s.encode("utf-8")
+        for a in args
+        for s in [str(a)]
+    )
 
     digest = hashlib.sha256(data).hexdigest()
 

@@ -8,3 +8,5 @@ from . import pipeline
 from . import plotting
 from . import preprocessing
 from . import sigproc
+
+from .misc import Stop
