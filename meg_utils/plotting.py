@@ -621,10 +621,10 @@ def highlight_cells(mask, ax, color='r', linewidth=1, linestyle='solid'):
     if len(mask.shape) != 2:
         raise ValueError("Mask must be a 2D array.")
 
-    # Check if the mask dimensions match the plotted image dimensions
-    image_shape = ax.images[0].get_array().shape
-    if mask.shape != image_shape:
-        raise ValueError(f"Mask dimensions {mask.shape} do not match the plotted image dimensions {image_shape}.")
+    # # Check if the mask dimensions match the plotted image dimensions
+    # image_shape = ax.images[0].get_array().shape
+    # if mask.shape != image_shape:
+    #     raise ValueError(f"Mask dimensions {mask.shape} do not match the plotted image dimensions {image_shape}.")
 
     # Function to check if a cell is outside the mask or out of bounds
     def is_outside_mask(i, j, mask):

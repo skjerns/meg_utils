@@ -876,6 +876,7 @@ class LogisticRegressionOvaNegX(LogisticRegression):
 
     def reset_random_state(self, rng=0):
         self.rng = np.random.default_rng(rng)
+        return self
 
     def fit(self, X, y, neg_x=None, neg_x_ratio=None):
         """
