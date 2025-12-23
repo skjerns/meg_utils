@@ -978,7 +978,6 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         return np.array(proba).T
 
 #%% main
-import stimer
 if __name__=='__main__':
     data_x = np.random.rand(100, 306, 101)
     data_y = np.repeat(np.arange(10), 10)
