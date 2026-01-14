@@ -20,7 +20,7 @@ def make_maxfilter_filename(filename, method='tsss', trans=None, mc=False):
     assert method in ['tsss', 'sss', 'etsss', 'esss']
     filename, ext = os.path.splitext(filename)
    
-    maxfilter_name += f'_trans[{trans}'  if trans else ''   
+    maxfilter_name = filename + (f'_trans[{trans}'  if trans else '') 
     maxfilter_name += f'_{method}'
     maxfilter_name += '_mc' if mc else ''
     maxfilter_name += ext
