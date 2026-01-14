@@ -4,6 +4,7 @@ Created on Mon Oct 21 10:20:19 2024
 
 @author: Simon Kern (@skjerns)
 """
+import os
 import mne
 import warnings
 from joblib import Memory, Parallel, delayed
@@ -14,7 +15,17 @@ memory = Memory(None)
 
 
 
+def make_maxfilter_filename(filename, method='tsss', trans=None, mc=False):
+    """return a valid maxfilter file name, ignoring mne conventions"""
+    assert method in ['tsss', 'sss', 'etsss', 'esss']
+    filename, ext = os.path.splitext(filename)
+   
+    maxfilter_name += f'_trans[{trans}'  if trans else ''   
+    maxfilter_name += f'_{method}'
+    maxfilter_name += '_mc' if mc else ''
+    maxfilter_name += ext
 
+    return maxfilter_name
 
 @memory.cache(verbose=0)
 def load_events(file, event_ids=None):
