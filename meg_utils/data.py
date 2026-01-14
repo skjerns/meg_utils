@@ -18,9 +18,9 @@ memory = Memory(None)
 def make_maxfilter_filename(filename, method='tsss', trans=None, mc=False):
     """return a valid maxfilter file name, ignoring mne conventions"""
     assert method in ['tsss', 'sss', 'etsss', 'esss']
-    filename, ext = os.path.splitext(filename)
+    file, ext = os.path.splitext(filename)
    
-    maxfilter_name = filename + (f'_trans[{trans}'  if trans else '') 
+    maxfilter_name = file + (f'_trans[{trans}]'  if trans else '') 
     maxfilter_name += f'_{method}'
     maxfilter_name += '_mc' if mc else ''
     maxfilter_name += ext
