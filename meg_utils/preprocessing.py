@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 from sklearn.preprocessing import robust_scale as _robust_scale
-from .constants import idx_mag, idx_grad
+from ._constants import idx_mag, idx_grad
 from autoreject import AutoReject, get_rejection_threshold, read_auto_reject
 
 

@@ -1,5 +1,4 @@
 
-from . import constants
 from . import conversion
 from . import data
 from . import decoding
