@@ -816,7 +816,8 @@ class LogisticRegressionOvaNegX(LogisticRegression):
     def __init__(
         self,
         base_clf=None,
-        penalty="l1",
+        l1_ratio=1,
+        penalty=None,
         C=1.0,
         solver="liblinear",
         max_iter=1000,
@@ -830,7 +831,7 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             Base binary classifier to clone per class. If None, a
             LogisticRegression is constructed from the remaining parameters.
         penalty : str
-            Regularization penalty passed to LogisticRegression.
+            DEPRECATED Regularization penalty passed to LogisticRegression.
         C : float
             Inverse regularization strength.
         solver : str
@@ -844,9 +845,12 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         """
         self.base_clf = None if base_clf is None else base_clf  # just for __repr__
 
+        if penalty is not None:
+            raise DeprecationWarning('penalty is deprecated, use l1_ratio')
+
         if base_clf is None:
             base_clf = LogisticRegression(
-                l1_ratio=1.0 if penalty=='l1' else 0.0,
+                l1_ratio=l1_ratio,
                 C=C,
                 solver=solver,
                 max_iter=max_iter,
@@ -867,11 +871,11 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         # self.n_pca = n_pca
         LogisticRegression.__init__(
             self,
-            penalty=penalty,
+            l1_ratio=l1_ratio,
             C=C,
             solver=solver,
             max_iter=max_iter,
-            # multi_class="ovr",
+            random_state = 0,  # will be overwritten later anyway
         )
 
     def reset_random_state(self, rng=0):
