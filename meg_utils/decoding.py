@@ -883,7 +883,7 @@ class LogisticRegressionOvaNegX(LogisticRegression):
         return self
 
     def set_params(self, **params):
-        super().set_params(**params)
+        BaseEstimator.set_params(self, **params)
         self.base_clf_.set_params(**params)
         return self
 
