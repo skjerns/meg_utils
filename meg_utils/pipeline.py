@@ -169,7 +169,10 @@ class DataPipeline(Pipeline):
                 raise ValueError(
                     f'Did not find parameter "{key}" in any of the pipeline steps: {self.steps}'
                 )
-
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.requires_fit = False
+        return tags
 
 class _BaseStep(TransformerMixin, BaseEstimator):
     """
@@ -189,6 +192,10 @@ class _BaseStep(TransformerMixin, BaseEstimator):
     -----
     Ensures type checking before and after transformation.
     """
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.requires_fit = False
+        return tags
 
     def fit(self, X, y=None):
         """
@@ -1020,4 +1027,4 @@ if __name__ == '__main__':
     pipeline.check_steps()
     pipeline.set_params_all(n_jobs=2, verbose='INFO')
 
-    # pipeline.transform(filename)
+    pipeline.transform(filename)
