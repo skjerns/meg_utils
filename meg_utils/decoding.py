@@ -24,6 +24,7 @@ from sklearn.ensemble._voting import LabelEncoder, _routing_enabled
 from sklearn.ensemble._voting import process_routing, Bunch
 from sklearn.ensemble._voting import _fit_single_estimator
 from sklearn.decomposition import PCA
+from itertools import product
 
 try:
     from . import misc
@@ -49,6 +50,34 @@ def is_json_serializable(obj):
     except (TypeError, OverflowError):
         return False
 
+
+def predict_proba_along(clf, X, axes):
+    if isinstance(axes, int):
+        axes = [axes]
+    axes = sorted([a % X.ndim for a in axes])
+    samples_ax, features_ax = sorted(set(range(X.ndim)) - set(axes))
+
+    sa = samples_ax - sum(a < samples_ax for a in axes)
+    fa = features_ax - sum(a < features_ax for a in axes)
+
+    results = []
+    for idx in product(*[range(X.shape[a]) for a in axes]):
+        sl = [slice(None)] * X.ndim
+        for a, i in zip(axes, idx):
+            sl[a] = i
+        X_2d = np.moveaxis(X[tuple(sl)], [sa, fa], [0, 1])
+        results.append(clf.predict_proba(X_2d))
+
+    iter_shape = [X.shape[a] for a in axes]
+    # out_shape = [X.shape[a] for a in range(X.ndim) if a != features_ax]
+    arr = np.array(results).reshape(iter_shape + list(results[0].shape))
+
+    # Move iter axes to their correct output positions
+    # arr axes: [*iter_axes, samples, n_classes]
+    dest = [a - (a > features_ax) for a in axes]
+    src = list(range(len(axes)))
+    out = np.moveaxis(arr, src, dest)
+    return out
 
 class _PCAReducer:
     """
@@ -427,7 +456,7 @@ def cross_validation_across_time(data_x, data_y, clf, add_null_data=False,
 
 
 
-def decoding_heatmap_transfer(clf, data_x, data_y, test_x, test_y, range_t=None):
+def decoding_heatmap_transfer(clf, data_x, data_y, test_x, test_y):
     """
     create a heatmap of decoding by varying training and testing time of
     two independent samples

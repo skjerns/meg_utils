@@ -329,6 +329,80 @@ def get_ch_neighbours(ch_name, n=9, return_idx=False,
         layout.plot(picks=[list(positions).index(ch) for ch in chs_out])
     return sorted([ch_as_in_raw.index(ch) for ch in chs_out]) if return_idx else chs_out
 
+def compress_dataframe(df, force_float=None, strings='categorical',
+                       categorical_threshold=0.5):
+    """
+    Compress pandas DataFrame column types to reduce memory usage.
+
+    Applies the following optimizations:
+    - Integer columns: downcast to smallest possible int type
+    - Float columns: downcast to float32 where possible
+    - String/object columns: convert to categorical if beneficial
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame to compress.
+    force_float : numpy dtype or None, optional
+        If specified, force all float columns to this dtype (e.g., np.float32).
+        If None (default), automatically downcast to float32 where possible
+        using pandas' downcast functionality.
+    strings : str or None, optional
+        How to handle string/object columns. Options:
+        - 'categorical': convert to categorical if beneficial (default)
+        - None: skip string compression
+    categorical_threshold : float, optional
+        Maximum ratio of unique values to total values for a string column
+        to be converted to categorical. Default is 0.5 (50%).
+        E.g., if a column has 100 rows and 40 unique values (40%),
+        it will be converted to categorical.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with compressed column types.
+
+    Examples
+    --------
+    >>> df = pd.DataFrame({'a': [1, 2, 3], 'b': [1.5, 2.5, 3.5],
+    ...                    'c': ['x', 'x', 'y']})
+    >>> df_compressed = compress_dataframe(df)
+    >>> df_compressed.dtypes
+    a       int8
+    b    float32
+    c   category
+    dtype: object
+    """
+    df = df.copy()
+
+    for col in df.columns:
+        col_dtype = df[col].dtype
+
+        # Handle integer columns
+        if np.issubdtype(col_dtype, np.integer):
+            df[col] = pd.to_numeric(df[col], downcast='integer')
+
+        # Handle float columns
+        elif np.issubdtype(col_dtype, np.floating):
+            if force_float is not None:
+                df[col] = df[col].astype(force_float)
+            else:
+                # Downcast to smallest float type (float32 minimum)
+                df[col] = pd.to_numeric(df[col], downcast='float')
+
+        # Handle string/object columns
+        elif col_dtype == 'object' or col_dtype.name == 'string':
+            if strings == 'categorical':
+                n_unique = df[col].nunique()
+                n_total = len(df[col])
+                # Convert to categorical if ratio of unique values is below threshold
+                # and there's at least some data
+                if n_total > 0 and (n_unique / n_total) <= categorical_threshold:
+                    df[col] = df[col].astype('category')
+
+    return df
+
+
 def to_long_df(arr, columns=None, value_name='value', **col_labels):
     """
     Convert an N-dimensional NumPy array to a long-format pandas DataFrame.
@@ -434,6 +508,63 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
             used_colnames.add(out_name)
 
     return pd.DataFrame(out_data, columns=out_cols)
+
+
+def long_df_to_array(df, columns, value_name='value', fill_value=np.nan):
+    """
+    Convert a long-format DataFrame to an N-dimensional NumPy array.
+
+    Inverse of :func:`to_long_df`. For each combination of values across the
+    given dimension columns, the corresponding value is placed in the array at
+    the matching multi-dimensional index.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Long-format DataFrame, e.g. as produced by :func:`to_long_df`.
+    columns : list of str
+        Names of the DataFrame columns that correspond to array dimensions,
+        given in the desired dimension order. The unique sorted values in each
+        column define the axis labels and the array shape along that axis.
+    value_name : str, default='value'
+        Name of the column whose values are placed into the array.
+    fill_value : scalar, default=np.nan
+        Value inserted for index combinations not present in ``df``.
+
+    Returns
+    -------
+    np.ndarray
+        N-dimensional array with
+        ``shape = (len(unique(col)) for col in columns)``.
+
+    Examples
+    --------
+    >>> probas = np.random.rand(16, 50, 10)
+    >>> timepoints = np.arange(-100, 400, 10)
+    >>> df = to_long_df(probas, columns=['trial', 'timepoint', 'proba'],
+    ...                 value_name='probability', timepoint=timepoints)
+    >>> arr = long_df_to_array(df, columns=['trial', 'timepoint', 'proba'],
+    ...                        value_name='probability')
+    >>> arr.shape
+    (16, 50, 10)
+    >>> np.allclose(arr, probas)
+    True
+    """
+    # Sorted unique values per dimension → axis labels and shape
+    uniques = [np.sort(df[col].unique()) for col in columns]
+    shape = tuple(len(u) for u in uniques)
+
+    # Map each dimension column to 0-based integer indices via searchsorted
+    indices = tuple(
+        np.searchsorted(uniques[ax], df[columns[ax]].values)
+        for ax in range(len(columns))
+    )
+
+    # Allocate output and scatter values
+    arr = np.full(shape, fill_value)
+    arr[indices] = df[value_name].values
+
+    return arr
 
 
 def low_priority():

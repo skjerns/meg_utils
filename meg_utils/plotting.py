@@ -15,6 +15,10 @@ from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
 import imageio
 from io import BytesIO
+from PIL import Image, PngImagePlugin
+import json
+import inspect
+import subprocess
 
 def _infer_layout(n_values):
     louts_dir = f'{mne.__path__[0]}/channels/data/layouts/'
@@ -449,14 +453,14 @@ def make_fig(
         sns.despine(fig)
     return fig, axs, *axs_bottom
 
-def savefig(fig, file, tight=True, despine=True, **kwargs):
+def savefig(fig, file, tight=True, despine=True, metadata=None, **kwargs):
     """
-    Save a Matplotlib figure to a specified file with optional adjustments.
+    Save a Matplotlib figure to a specified file with optional adjustments and metadata.
 
     This function refreshes the figure, applies optional layout adjustments
     (tight layout and despine), and saves the figure to the specified file.
     It ensures the output directory exists and appends a default file extension
-    if none is provided.
+    if none is provided. For PNG and JPG files, custom metadata can be embedded.
 
     Parameters
     ----------
@@ -471,6 +475,14 @@ def savefig(fig, file, tight=True, despine=True, **kwargs):
     despine : bool, optional
         If True, removes the top and right spines from the figure using
         `sns.despine()`. Default is True.
+    metadata : dict | str | False | None, optional
+        Metadata to embed in the image file:
+        - dict: Custom metadata key-value pairs
+        - str: Single metadata string (stored as 'metadata' key)
+        - False: No metadata is added
+        - None (default): Auto-generate metadata with script path and git commit hash
+        For PNG files, each key-value pair is stored as a text chunk.
+        For JPG files, the metadata is JSON-encoded and stored in the comment field.
     **kwargs : dict, optional
         Additional keyword arguments passed to `fig.savefig()`.
 
@@ -479,6 +491,16 @@ def savefig(fig, file, tight=True, despine=True, **kwargs):
     - The function ensures the output directory exists by creating it if necessary.
     - Supported file extensions include 'png', 'jpg', 'svg', and 'eps'. If no
       extension is provided, '.png' is used by default.
+    - Metadata is only supported for PNG and JPG formats.
+    - For PNG: metadata keys and values are stored as text chunks
+    - For JPG: metadata is JSON-encoded and stored as a JPEG comment
+
+    Examples
+    --------
+    >>> fig, ax = plt.subplots()
+    >>> ax.plot([1, 2, 3], [1, 4, 9])
+    >>> metadata = {'author': 'John Doe', 'experiment': 'MEG_2024', 'notes': 'Test data'}
+    >>> savefig(fig, 'plot.png', metadata=metadata)
     """
     fig.canvas.draw_idle()   # Refresh only fig1
     fig.canvas.flush_events()  # Process GUI events for fig1
@@ -497,6 +519,132 @@ def savefig(fig, file, tight=True, despine=True, **kwargs):
     if not file.endswith(('png', 'jpg', 'svg', 'eps')):
         file = file + '.png'
     fig.savefig(file, **kwargs)
+
+    # Add metadata to PNG or JPG files if provided
+    if metadata is False:
+        # Explicitly skip metadata
+        pass
+    elif metadata is None:
+        # Auto-generate default metadata
+        metadata = _generate_default_metadata()
+        _add_image_metadata(file, metadata)
+    elif isinstance(metadata, str):
+        # Convert string to dict
+        metadata = {'metadata': metadata}
+        _add_image_metadata(file, metadata)
+    elif isinstance(metadata, dict):
+        # Use provided metadata dict
+        _add_image_metadata(file, metadata)
+
+
+def _generate_default_metadata():
+    """
+    Generate default metadata including script path and git commit hashes.
+
+    Returns
+    -------
+    dict
+        Dictionary with 'script_path', 'script_git_commit', and 'repo_git_commit' keys.
+    """
+    metadata = {}
+
+    # Get the calling script path
+    caller_path = None
+    try:
+        frame = inspect.currentframe()
+        # Go up the call stack to find the caller outside this module
+        caller_frame = frame
+        while caller_frame is not None:
+            caller_info = inspect.getframeinfo(caller_frame)
+            caller_path = caller_info.filename
+            # Skip frames from this module
+            if not caller_path.endswith('plotting.py'):
+                metadata['script_path'] = os.path.abspath(caller_path)
+                break
+            caller_frame = caller_frame.f_back
+    except Exception:
+        metadata['script_path'] = 'n/a'
+        caller_path = None
+
+    # Get the git commit hash of the caller script
+    if caller_path and os.path.exists(caller_path):
+        try:
+            script_dir = os.path.dirname(os.path.abspath(caller_path))
+            script_name = os.path.basename(caller_path)
+            result = subprocess.run(
+                ['git', 'log', '-1', '--format=%H', script_name],
+                cwd=script_dir,
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True
+            )
+            metadata['script_git_commit'] = result.stdout.strip() or 'n/a'
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            metadata['script_git_commit'] = 'n/a'
+    else:
+        metadata['script_git_commit'] = 'n/a'
+
+    # Get the git commit hash of the current repository
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True
+        )
+        metadata['repo_git_commit'] = result.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        metadata['repo_git_commit'] = 'n/a'
+
+    return metadata
+
+
+def _add_image_metadata(filepath, metadata):
+    """
+    Add metadata to PNG or JPG image files.
+
+    Parameters
+    ----------
+    filepath : str
+        Path to the image file.
+    metadata : dict
+        Dictionary of metadata key-value pairs to embed in the image.
+
+    Notes
+    -----
+    - For PNG files: metadata is stored as text chunks
+    - For JPG files: metadata is JSON-encoded and stored as a comment
+    - All metadata values are converted to strings
+    """
+    if not isinstance(metadata, dict) or not metadata:
+        return
+
+    # Convert all metadata values to strings
+    metadata_str = {k: str(v) for k, v in metadata.items()}
+
+    try:
+        img = Image.open(filepath)
+        img_format = img.format
+
+        if img_format == 'PNG':
+            # For PNG: add metadata as text chunks
+            pnginfo = PngImagePlugin.PngInfo()
+            for key, value in metadata_str.items():
+                pnginfo.add_text(key, value)
+            img.save(filepath, "PNG", pnginfo=pnginfo)
+
+        elif img_format in ('JPEG', 'JPG'):
+            # For JPEG: store metadata as JSON in comment field
+            comment = json.dumps(metadata_str)
+            # Save with comment - PIL supports the 'comment' parameter for JPEG
+            img.save(filepath, "JPEG", comment=comment, quality=95)
+
+        img.close()
+
+    except Exception as e:
+        warnings.warn(f"Could not add metadata to {filepath}: {e}")
 
 
 def normalize_lims(axs, which='xy'):
