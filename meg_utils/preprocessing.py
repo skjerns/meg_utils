@@ -44,11 +44,8 @@ def rescale_meg(arr):
     assert len(set(arr.shape) & set([306, 204, 102]))>0, f'Probably not the right amount of channels? {arr.shape=}'
     # some sanity check, if these
     if arr.min() < -1e-6 or arr.max() > 1e-6:
-        warnings.warn(
-            "arr min/max are not in MEG scale, no rescaling applied: {arr.min()} / {arr.max()}"
-        )
         raise Exception(
-            "arr min/max are not in MEG scale, no rescaling applied: {arr.min()} / {arr.max()}"
+            f"arr min/max are not in MEG scale, no rescaling applied: {arr.min()} / {arr.max()}"
         )
     arr = np.array(arr)
     grad_scale = 1e10
@@ -71,10 +68,6 @@ def rescale_meg(arr):
 
     if len(dims) != 1:
         warnings.warn(
-            f"Several or no matching dimensions found for sensor dimension: {arr.shape}"
-            " will simply reshape everything with grad_scale."
-        )
-        raise Exception(
             f"Several or no matching dimensions found for sensor dimension: {arr.shape}"
             " will simply reshape everything with grad_scale."
         )
