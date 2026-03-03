@@ -7,14 +7,8 @@ Created on Tue Dec 17 16:05:05 2024
 import sys; sys.path.append('../..')
 from meg_utils import decoding
 
-
-import os
 import unittest
 import numpy as np
-import scipy
-from scipy import io
-from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 class TestDecoding(unittest.TestCase):
 

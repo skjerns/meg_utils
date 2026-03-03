@@ -7,21 +7,12 @@ Created on Tue Jul  8 16:23:48 2025
 """
 
 import sys; sys.path.append('../..')
-from meg_utils import sigproc
 
-
-import os
 import unittest
 import numpy as np
-import scipy
-from scipy import io
-from tqdm import tqdm
 import matplotlib.pyplot as plt
-import unittest
 from meg_utils.sigproc import curves, fit_curve
-from meg_utils.sigproc import bandpass, notch
-import unittest
-import numpy as np
+from meg_utils.sigproc import notch
 from scipy.fft import rfft, rfftfreq
 
 class TestFitCurve(unittest.TestCase):
