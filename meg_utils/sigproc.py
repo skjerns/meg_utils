@@ -755,7 +755,7 @@ def interpolate(times, data, n_samples=None, kind='linear', axis=-1):
     if n_samples is None:
         n_samples = len(np.unique(times))
 
-    if set(times)!=len(times):
+    if len(set(times)) != len(times):
         times_unique = np.unique(times)
         mean = [np.mean(data[times==t], 0) for t in times_unique]
         data = np.transpose(mean)
@@ -765,7 +765,7 @@ def interpolate(times, data, n_samples=None, kind='linear', axis=-1):
     even_timepoints = np.linspace(times.min(), times.max(), num=n_samples)
 
     # Interpolation function (linear, can change to 'cubic', 'quadratic', etc.)
-    interp_func = interp1d(times, data, kind=kind)  # or 'cubic'
+    interp_func = interp1d(times, data, kind=kind, axis=axis)
 
     # Interpolated values
     even_spaced_values = interp_func(even_timepoints)
