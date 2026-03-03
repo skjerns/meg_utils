@@ -98,4 +98,5 @@ class FilterTests(unittest.TestCase):
             out = notch(data, freqs=[50], sfreq=sfreq)
 
 
-unittest.main(verbosity=2)
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

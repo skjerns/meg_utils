@@ -5,6 +5,7 @@ Tests for meg_utils.misc — focusing on to_long_df / long_df_to_array.
 """
 import sys; sys.path.append('../..')
 
+import unittest
 import numpy as np
 import pandas as pd
 import pytest
@@ -209,3 +210,7 @@ class TestLongDfToArrayFailures:
         df = pd.DataFrame({'v': [1.0, 2.0]})
         with pytest.raises(Exception):
             long_df_to_array(df, columns=[], value_name='v')
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -24,3 +24,6 @@ class TestDecoding(unittest.TestCase):
         out1 = decoding.predict_proba_along(clf, X, axes=0, n_jobs=1)
         out2 = decoding.predict_proba_along(clf, X, axes=0, n_jobs=2)
         np.testing.assert_array_equal(out1, out2)
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
