@@ -51,7 +51,27 @@ def is_json_serializable(obj):
         return False
 
 
-def predict_proba_along(clf, X, axes):
+def predict_proba_along(clf, X, axes, n_jobs=1):
+    """Run clf.predict_proba along iteration axes of X.
+
+    X must have exactly two non-iteration axes: one for samples and one for
+    features. All remaining axes are iterated over and the classifier is
+    applied independently to each resulting 2D slice.
+
+    Parameters
+    ----------
+    clf : fitted sklearn classifier
+    X : ndarray, shape (..., n_samples, ..., n_features, ...)
+    axes : int or list of int
+        Axes to iterate over (all axes except samples and features).
+    n_jobs : int, optional
+        Number of parallel jobs (joblib). Default is 1 (serial).
+
+    Returns
+    -------
+    out : ndarray, shape (*iter_dims, n_samples, n_classes)
+        Predicted probabilities with iter axes moved to their original positions.
+    """
     if isinstance(axes, int):
         axes = [axes]
     axes = sorted([a % X.ndim for a in axes])
@@ -60,13 +80,13 @@ def predict_proba_along(clf, X, axes):
     sa = samples_ax - sum(a < samples_ax for a in axes)
     fa = features_ax - sum(a < features_ax for a in axes)
 
-    results = []
+    slices = []
     for idx in product(*[range(X.shape[a]) for a in axes]):
         sl = [slice(None)] * X.ndim
         for a, i in zip(axes, idx):
             sl[a] = i
-        X_2d = np.moveaxis(X[tuple(sl)], [sa, fa], [0, 1])
-        results.append(clf.predict_proba(X_2d))
+        slices.append(np.moveaxis(X[tuple(sl)], [sa, fa], [0, 1]))
+    results = Parallel(n_jobs=n_jobs)(delayed(clf.predict_proba)(X_2d) for X_2d in slices)
 
     iter_shape = [X.shape[a] for a in axes]
     # out_shape = [X.shape[a] for a in range(X.ndim) if a != features_ax]
