@@ -14,14 +14,9 @@ import numpy as np
 import scipy
 from scipy import io
 from tqdm import tqdm
-from tdlm import plotting
 import matplotlib.pyplot as plt
-import tdlm
 
 class TestDecoding(unittest.TestCase):
-
-    def test_votingclassifier(self):
-        pass
 
     def test_predict_proba_along_n_jobs(self):
         """n_jobs=1 and n_jobs=2 must return identical results."""
