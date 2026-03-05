@@ -453,7 +453,8 @@ def make_fig(
         sns.despine(fig)
     return fig, axs, *axs_bottom
 
-def savefig(fig, file, tight=True, despine=True, metadata=None, **kwargs):
+def savefig(fig, file, tight=True, despine=True, metadata=None,
+            save_vector=True, **kwargs):
     """
     Save a Matplotlib figure to a specified file with optional adjustments and metadata.
 
@@ -475,6 +476,10 @@ def savefig(fig, file, tight=True, despine=True, metadata=None, **kwargs):
     despine : bool, optional
         If True, removes the top and right spines from the figure using
         `sns.despine()`. Default is True.
+    save_vector : bool, optional
+        If True, saves additional SVG and EPS copies of the figure to a
+        'vectors/' subfolder in the same directory as `file`. The `dpi`
+        kwarg is excluded when saving vector formats. Default is True.
     metadata : dict | str | False | None, optional
         Metadata to embed in the image file:
         - dict: Custom metadata key-value pairs
@@ -520,21 +525,33 @@ def savefig(fig, file, tight=True, despine=True, metadata=None, **kwargs):
         file = file + '.png'
     fig.savefig(file, **kwargs)
 
-    # Add metadata to PNG or JPG files if provided
+    # Resolve metadata to a dict (or None if disabled)
     if metadata is False:
-        # Explicitly skip metadata
-        pass
+        resolved_metadata = None
     elif metadata is None:
-        # Auto-generate default metadata
-        metadata = _generate_default_metadata()
-        _add_image_metadata(file, metadata)
+        resolved_metadata = _generate_default_metadata()
     elif isinstance(metadata, str):
-        # Convert string to dict
-        metadata = {'metadata': metadata}
-        _add_image_metadata(file, metadata)
-    elif isinstance(metadata, dict):
-        # Use provided metadata dict
-        _add_image_metadata(file, metadata)
+        resolved_metadata = {'metadata': metadata}
+    else:
+        resolved_metadata = metadata
+
+    if save_vector:
+        vec_dir = os.path.join(out_dir, 'vectors') if out_dir else 'vectors'
+        os.makedirs(vec_dir, exist_ok=True)
+        basename = os.path.splitext(os.path.basename(file))[0]
+        vec_kwargs = {k: v for k, v in kwargs.items() if k != 'dpi'}
+        for ext in ('svg', 'eps'):
+            vec_file = os.path.join(vec_dir, f'{basename}.{ext}')
+            fig.savefig(vec_file, **vec_kwargs)
+        if resolved_metadata:
+            json_file = os.path.join(vec_dir, f'{basename}.json')
+            with open(json_file, 'w') as f:
+                json.dump(resolved_metadata, f, indent=4)
+
+    # Add metadata to PNG or JPG files if provided
+    if resolved_metadata:
+        _add_image_metadata(file, resolved_metadata)
+
 
 
 def _generate_default_metadata():
