@@ -664,6 +664,55 @@ def _add_image_metadata(filepath, metadata):
         warnings.warn(f"Could not add metadata to {filepath}: {e}")
 
 
+def label_panels(axs, labels=None, fontsize=14, x=-0.05, y=1.05, **kwargs):
+    """
+    Add bold letter annotations (e.g. A, B, C) to subplot axes.
+
+    Useful for labelling panels in a figure. Labels are placed in the upper-left
+    corner, slightly outside the axes frame.
+
+    Parameters
+    ----------
+    axs : sequence of matplotlib.axes.Axes
+        Axes to annotate. Can be a flat list or numpy array (e.g. from plt.subplots()).
+    labels : sequence of str or None, optional
+        Labels to place on each axis. If None, uses uppercase letters A, B, C, ...
+        Must be at least as long as axs.
+    fontsize : int or float, optional
+        Font size of the annotation. Default is 14.
+    x : float, optional
+        Horizontal position in axes-fraction coordinates. Default is -0.05
+        (slightly left of the left edge).
+    y : float, optional
+        Vertical position in axes-fraction coordinates. Default is 1.05
+        (slightly above the top edge).
+    **kwargs
+        Additional keyword arguments passed to ax.text().
+
+    Examples
+    --------
+    >>> fig, axs = plt.subplots(2, 3)
+    >>> annotate_subplots(axs[0])           # label only top row: A B C
+    >>> annotate_subplots(axs.flat)         # label all 6 subplots: A B C D E F
+    >>> annotate_subplots([ax1, ax3], labels=['A', 'C'])
+    """
+    import string
+
+    if hasattr(axs, 'flat'):
+        axs = list(axs.flat)
+    else:
+        axs = list(axs)
+
+    if labels is None:
+        labels = list(string.ascii_uppercase)
+
+    text_kwargs = dict(fontsize=fontsize, fontweight='bold', va='bottom', ha='left')
+    text_kwargs.update(kwargs)
+
+    for ax, label in zip(axs, labels):
+        ax.text(x, y, label, transform=ax.transAxes, **text_kwargs)
+
+
 def normalize_lims(axs, which='xy'):
     """
     Synchronize axis and/or color (clim) limits across a collection of Matplotlib Axes.
