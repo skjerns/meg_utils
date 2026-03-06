@@ -29,6 +29,7 @@ dependencies = [
     "scipy",
     "seaborn",
     "tqdm",
+    "imageio",
 ]
 
 [project.urls]
