@@ -669,6 +669,45 @@ def _safe_send(msg, parse_mode):
             pass
 
 
+def convert_to_numeric(df, convert_dtypes=True, inplace=True):
+    """
+    Convert DataFrame columns to numeric dtypes where possible.
+
+    Tries ``pd.to_numeric`` on every non-numeric column. If all values in a
+    column convert successfully, the numeric column is kept; otherwise the
+    original column is retained unchanged. Columns that contain any
+    non-numeric value (including ``None`` / ``NaN``) will not be converted.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame.
+    convert_dtypes : bool, default=True
+        If True, call ``df.convert_dtypes()`` at the end to further optimize
+        dtypes (e.g. nullable integer types, string dtype).
+    inplace : bool, default=True
+        If True, modify *df* in place. If False, operate on a copy.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with eligible columns converted to numeric types.
+    """
+    if not inplace:
+        df = df.copy()
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        try:
+            converted = pd.to_numeric(df[col], errors='raise')
+            df[col] = converted
+        except ValueError:
+            pass
+    if convert_dtypes:
+        df = df.convert_dtypes()
+    return df
+
+
 def _fmt_duration(seconds):
     """Return human-readable duration."""
     seconds = float(seconds)
