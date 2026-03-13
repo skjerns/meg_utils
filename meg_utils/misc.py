@@ -701,7 +701,7 @@ def convert_to_numeric(df, convert_dtypes=True, inplace=True):
         try:
             converted = pd.to_numeric(df[col], errors='raise')
             df[col] = converted
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     if convert_dtypes:
         df = df.convert_dtypes()

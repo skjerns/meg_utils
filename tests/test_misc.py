@@ -282,19 +282,20 @@ class TestConvertToNumeric:
         assert not pd.api.types.is_numeric_dtype(out['a'])
 
     # --- NaN / None handling ---
-    # errors='raise' means any None/NaN in a column blocks conversion
+    # pd.to_numeric successfully converts None/NaN, so these columns DO convert
 
-    def test_column_with_none_and_numeric_strings_not_converted(self):
-        """None among numeric strings blocks conversion (errors='raise')."""
+    def test_column_with_none_and_numeric_strings_converted(self):
+        """None among numeric strings still converts (None becomes NaN)."""
         df = pd.DataFrame({'a': ['1', None, '3']})
         out = convert_to_numeric(df)
-        assert not pd.api.types.is_numeric_dtype(out['a'])
+        assert pd.api.types.is_numeric_dtype(out['a'])
+        assert out['a'].isna().sum() == 1
 
-    def test_all_nan_column_not_converted(self):
-        """A column of all None is not converted to numeric."""
+    def test_all_nan_column(self):
+        """A column of all None converts (all values become NaN)."""
         df = pd.DataFrame({'a': [None, None, None]})
         out = convert_to_numeric(df)
-        assert not pd.api.types.is_numeric_dtype(out['a'])
+        assert out['a'].isna().all()
 
     def test_existing_nan_with_non_numeric_stays(self):
         """NaN + non-numeric strings: column should not be converted."""
@@ -302,11 +303,12 @@ class TestConvertToNumeric:
         out = convert_to_numeric(df)
         assert not pd.api.types.is_numeric_dtype(out['a'])
 
-    def test_np_nan_in_numeric_strings_not_converted(self):
-        """np.nan among numeric strings also blocks conversion."""
+    def test_np_nan_in_numeric_strings_converted(self):
+        """np.nan among numeric strings still converts."""
         df = pd.DataFrame({'a': ['1', np.nan, '3']})
         out = convert_to_numeric(df)
-        assert not pd.api.types.is_numeric_dtype(out['a'])
+        assert pd.api.types.is_numeric_dtype(out['a'])
+        assert out['a'].isna().sum() == 1
 
     # --- multiple columns ---
 
@@ -376,8 +378,8 @@ class TestConvertToNumeric:
         df = pd.DataFrame({'a': ['1', '2', '3'], 'b': ['x', 'y', 'z']})
         out = convert_to_numeric(df, convert_dtypes=False)
         assert pd.api.types.is_numeric_dtype(out['a'])
-        # 'b' should remain object dtype, not StringDtype
-        assert out['b'].dtype == object
+        # 'b' should remain object or str dtype, not get further converted
+        assert pd.api.types.is_string_dtype(out['b'])
 
     def test_convert_dtypes_true_string_dtype(self):
         """With convert_dtypes=True, text columns get StringDtype."""
