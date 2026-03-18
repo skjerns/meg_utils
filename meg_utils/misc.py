@@ -124,6 +124,41 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
     files = set(files)  # filter duplicates
     return sorted(files, key=natsort_key)
 
+def get_streaks(arr):
+    """helper function to get indices of streaks automatically
+    i.e. [1,2,3,4,8,9] -> [[1,4], [8,9]]
+    transform dict_values to list and then to array.
+
+    returns: min and max of the array across all dimensions"""
+    if len(arr)==0:
+        return np.array([])
+    arr = np.unique([x for x in arr])
+    streaks = np.split(arr, np.where(np.diff(arr) != 1)[0] + 1)
+    streaks = [(s[0], s[-1]) for s in streaks]
+    return np.array(streaks)
+    
+    
+def get_clusters(arr):
+    """Get start/end indices of contiguous clusters of same values.
+
+    Parameters
+    ----------
+    arr : array-like
+        1D input array.
+
+    Returns
+    -------
+    list of [value, [start, end]]
+        Inclusive start/end indices for each cluster.
+    """
+    if len(arr) == 0:
+        return []
+    arr = np.asarray(arr)
+    change = np.where(np.diff(arr) != 0)[0] + 1
+    starts = np.concatenate([[0], change])
+    ends = np.concatenate([change - 1, [len(arr) - 1]])
+    return [[arr[s], [s, e]] for s, e in zip(starts, ends)]
+
 def choose_file(default_dir=None, default_file=None, exts='txt',
                 title='Choose file', mode='open', multiple=False):
     """
@@ -510,7 +545,7 @@ def to_long_df(arr, columns=None, value_name='value', **col_labels):
     return pd.DataFrame(out_data, columns=out_cols)
 
 
-def long_df_to_array(df, columns, value_name='value', fill_value=np.nan):
+def long_df_to_array(df, value_name, columns, fill_value=np.nan):
     """
     Convert a long-format DataFrame to an N-dimensional NumPy array.
 
@@ -550,6 +585,25 @@ def long_df_to_array(df, columns, value_name='value', fill_value=np.nan):
     >>> np.allclose(arr, probas)
     True
     """
+    # --- Input validation ---
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise KeyError(f"Column(s) {missing} not found in DataFrame. "
+                       f"Available: {list(df.columns)}")
+    if value_name not in df.columns:
+        raise KeyError(f"Value column '{value_name}' not found in DataFrame. "
+                       f"Available: {list(df.columns)}")
+    if value_name in columns:
+        raise ValueError(f"'{value_name}' appears in both `value_name` and "
+                         f"`columns` — these must be disjoint.")
+
+    # Warn about NaN in dimension columns (searchsorted gives wrong indices)
+    for col in columns:
+        if df[col].isna().any():
+            raise ValueError(
+                f"Column '{col}' contains NaN values. Dimension columns must "
+                f"not contain NaN as this produces incorrect array indices.")
+
     # Sorted unique values per dimension → axis labels and shape
     uniques = [np.sort(df[col].unique()) for col in columns]
     shape = tuple(len(u) for u in uniques)
@@ -559,6 +613,16 @@ def long_df_to_array(df, columns, value_name='value', fill_value=np.nan):
         np.searchsorted(uniques[ax], df[columns[ax]].values)
         for ax in range(len(columns))
     )
+
+    # Check that each combination of indices is unique (no duplicate rows)
+    multi_idx = np.column_stack(indices)
+    n_rows, n_unique = len(multi_idx), len(np.unique(multi_idx, axis=0))
+    if n_unique != n_rows:
+        raise ValueError(
+            f"Duplicate index combinations found: {n_rows} rows but only "
+            f"{n_unique} unique combinations across columns {columns}. "
+            f"Each combination must map to exactly one value."
+        )
 
     # Allocate output and scatter values
     arr = np.full(shape, fill_value)
