@@ -136,15 +136,17 @@ def get_streaks(arr):
     streaks = np.split(arr, np.where(np.diff(arr) != 1)[0] + 1)
     streaks = [(s[0], s[-1]) for s in streaks]
     return np.array(streaks)
-    
-    
-def get_clusters(arr):
+
+
+def get_clusters(arr, start=0):
     """Get start/end indices of contiguous clusters of same values.
 
     Parameters
     ----------
     arr : array-like
         1D input array.
+    arr : int
+        index at which counting should start.
 
     Returns
     -------
@@ -157,7 +159,7 @@ def get_clusters(arr):
     change = np.where(np.diff(arr) != 0)[0] + 1
     starts = np.concatenate([[0], change])
     ends = np.concatenate([change - 1, [len(arr) - 1]])
-    return [[arr[s], [s, e]] for s, e in zip(starts, ends)]
+    return [[arr[s], [s+start, e+start]] for s, e in zip(starts, ends)]
 
 def choose_file(default_dir=None, default_file=None, exts='txt',
                 title='Choose file', mode='open', multiple=False):

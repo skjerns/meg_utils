@@ -477,7 +477,7 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
         If True, removes the top and right spines from the figure using
         `sns.despine()`. Default is True.
     save_vector : bool, optional
-        If True, saves additional SVG and EPS copies of the figure to a
+        If True, saves additional SVG and PDF copies of the figure to a
         'vectors/' subfolder in the same directory as `file`. The `dpi`
         kwarg is excluded when saving vector formats. Default is True.
     metadata : dict | str | False | None, optional
@@ -494,7 +494,7 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
     Notes
     -----
     - The function ensures the output directory exists by creating it if necessary.
-    - Supported file extensions include 'png', 'jpg', 'svg', and 'eps'. If no
+    - Supported file extensions include 'png', 'jpg', 'svg', and 'pdf'. If no
       extension is provided, '.png' is used by default.
     - Metadata is only supported for PNG and JPG formats.
     - For PNG: metadata keys and values are stored as text chunks
@@ -521,7 +521,7 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
     out_dir = os.path.dirname(file)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    if not file.endswith(('png', 'jpg', 'svg', 'eps')):
+    if not file.endswith(('png', 'jpg', 'svg', 'pdf')):
         file = file + '.png'
     fig.savefig(file, **kwargs)
 
@@ -540,7 +540,7 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
         os.makedirs(vec_dir, exist_ok=True)
         basename = os.path.splitext(os.path.basename(file))[0]
         vec_kwargs = {k: v for k, v in kwargs.items() if k != 'dpi'}
-        for ext in ('svg', 'eps'):
+        for ext in ('svg', 'pdf'):
             vec_file = os.path.join(vec_dir, f'{basename}.{ext}')
             fig.savefig(vec_file, **vec_kwargs)
         if resolved_metadata:
@@ -817,6 +817,92 @@ def normalize_lims(axs, which='xy'):
                     m.set_clim(vmin, vmax)
                     # m.changed() is called by set_clim internally; keeps colorbars in sync
     return
+
+
+def tornadoplot(data, x=None, y=None, center=0, low_colour='#4c72b0',
+                high_colour='#dd8452', ax=None, orient='h',
+                low_label='Low', high_label='High',
+                sort=True, **kwargs):
+    """
+    Create a tornado (diverging bar) chart from a DataFrame.
+
+    Bars extend left/right (or down/up) from a *center* value.
+    Values below *center* are coloured with *low_colour*, values above with
+    *high_colour*.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        DataFrame containing the data.
+    x : str
+        Column name for the numeric values (bar lengths).
+    y : str
+        Column name for the category labels (bar labels).
+    center : float, optional
+        The reference value that separates "low" from "high". Default is 0.
+    low_colour : str, optional
+        Colour for bars whose value is below *center*. Default is ``'#4c72b0'``.
+    high_colour : str, optional
+        Colour for bars whose value is >= *center*. Default is ``'#dd8452'``.
+    ax : matplotlib.axes.Axes or None, optional
+        Axes to draw on. If None a new figure and axes are created.
+    orient : {'h', 'v'}, optional
+        ``'h'`` for horizontal bars (default), ``'v'`` for vertical bars.
+    low_label : str, optional
+        Legend label for bars below *center*. Default is ``'Low'``.
+    high_label : str, optional
+        Legend label for bars at or above *center*. Default is ``'High'``.
+    sort : bool, optional
+        If True (default), rows are sorted by value so the largest bars appear
+        at the top (horizontal) or right (vertical).
+    **kwargs
+        Additional keyword arguments forwarded to ``seaborn.barplot``.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The Axes with the tornado plot.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({'feature': list('ABCDE'),
+    ...                     'value': [-0.3, 0.5, -0.1, 0.8, 0.2]})
+    >>> tornadoplot(df, x='value', y='feature', center=0)
+    """
+    df = data.copy()
+
+    if x is None or y is None:
+        raise ValueError("Both `x` and `y` must be specified.")
+
+    if sort:
+        df = df.sort_values(x, ascending=True).reset_index(drop=True)
+
+    colours = [high_colour if v >= center else low_colour for v in df[x]]
+
+    if ax is None:
+        _, ax = plt.subplots()
+
+    # assign a unique hue per row so seaborn accepts per-bar colours
+    df['_hue'] = range(len(df))
+    palette_map = dict(enumerate(colours))
+
+    if orient == 'h':
+        sns.barplot(data=df, x=x, y=y, hue='_hue', palette=palette_map,
+                    orient='h', legend=False, ax=ax, **kwargs)
+        ax.axvline(center, color='black', linewidth=0.8)
+    else:
+        sns.barplot(data=df, x=y, y=x, hue='_hue', palette=palette_map,
+                    orient='v', legend=False, ax=ax, **kwargs)
+        ax.axhline(center, color='black', linewidth=0.8)
+
+    # legend
+    from matplotlib.patches import Patch
+    handles = [Patch(facecolor=high_colour, label=high_label),
+               Patch(facecolor=low_colour, label=low_label)]
+    ax.legend(handles=handles)
+
+    return ax
 
 
 def highlight_cells(mask, ax, color='r', linewidth=1, linestyle='solid'):

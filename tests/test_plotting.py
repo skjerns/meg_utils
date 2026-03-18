@@ -3,19 +3,22 @@
 """
 Tests for meg_utils.plotting — focusing on savefig and vector output.
 """
-import sys; sys.path.append('../..')
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
 import os
 import tempfile
 
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import pytest
 from PIL import Image
 
-from meg_utils.plotting import savefig
+from meg_utils.plotting import savefig, tornadoplot
 
 
 # ---------------------------------------------------------------------------
@@ -193,3 +196,108 @@ class TestSavefigMetadata:
         assert 'script_path' in img.text
         img.close()
         plt.close('all')
+
+
+# ---------------------------------------------------------------------------
+# tornadoplot
+# ---------------------------------------------------------------------------
+
+def _make_pvalue_df(seed=42):
+    """30 subjects × 4 conditions, each with a random p-value."""
+    rng = np.random.default_rng(seed)
+    subjects = [f'sub-{i:02d}' for i in range(1, 31)]
+    conditions = ['visual', 'auditory', 'motor', 'memory']
+    rows = []
+    for subj in subjects:
+        for cond in conditions:
+            rows.append({'subject': subj, 'condition': cond,
+                         'pvalue': rng.uniform(0, 0.2)})
+    return pd.DataFrame(rows)
+
+
+class TestTornadoplot:
+
+    def test_returns_axes(self):
+        df = _make_pvalue_df()
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05)
+        assert isinstance(ax, plt.Axes)
+        plt.close('all')
+
+    def test_center_line_at_005(self):
+        df = _make_pvalue_df()
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05)
+        # the vertical reference line should be at x=0.05
+        vlines = [l.get_xdata()[0] for l in ax.get_lines()
+                  if np.isclose(l.get_xdata()[0], 0.05)]
+        assert len(vlines) == 1
+        plt.close('all')
+
+    def test_bar_colours(self):
+        df = _make_pvalue_df()
+        low, high = '#0000ff', '#ff0000'
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05,
+                         low_colour=low, high_colour=high)
+        patches = ax.patches
+        assert len(patches) > 0
+        from matplotlib.colors import to_rgba
+        for p in patches:
+            rgba = p.get_facecolor()
+            matches_low = np.allclose(rgba, to_rgba(low), atol=0.05)
+            matches_high = np.allclose(rgba, to_rgba(high), atol=0.05)
+            assert matches_low or matches_high, f"Unexpected colour {rgba}"
+        plt.close('all')
+
+    def test_vertical_orient(self):
+        df = _make_pvalue_df()
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05,
+                         orient='v')
+        # horizontal reference line at 0.05
+        hlines = [l.get_ydata()[0] for l in ax.get_lines()
+                  if np.isclose(l.get_ydata()[0], 0.05)]
+        assert len(hlines) == 1
+        plt.close('all')
+
+    def test_sort_order(self):
+        df = _make_pvalue_df()
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05,
+                         sort=True)
+        # tick labels top-to-bottom should correspond to ascending values
+        labels = [t.get_text() for t in ax.get_yticklabels()]
+        assert len(labels) > 0
+        plt.close('all')
+
+    def test_no_sort(self):
+        df = _make_pvalue_df()
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05,
+                         sort=False)
+        assert isinstance(ax, plt.Axes)
+        plt.close('all')
+
+    def test_custom_labels_in_legend(self):
+        df = _make_pvalue_df()
+        ax = tornadoplot(df, x='pvalue', y='condition', center=0.05,
+                         low_label='Significant', high_label='Not significant')
+        legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+        assert 'Significant' in legend_texts
+        assert 'Not significant' in legend_texts
+        plt.close('all')
+
+    def test_missing_x_or_y_raises(self):
+        df = _make_pvalue_df()
+        with pytest.raises(ValueError):
+            tornadoplot(df, x='pvalue', y=None, center=0.05)
+        with pytest.raises(ValueError):
+            tornadoplot(df, x=None, y='condition', center=0.05)
+        plt.close('all')
+
+    def test_provided_ax(self):
+        df = _make_pvalue_df()
+        fig, ax = plt.subplots()
+        returned_ax = tornadoplot(df, x='pvalue', y='condition', center=0.05,
+                                  ax=ax)
+        assert returned_ax is ax
+        plt.close('all')
+
+if __name__=='__main__':
+    import unittest
+    unittest.main()

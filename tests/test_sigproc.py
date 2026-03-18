@@ -6,7 +6,8 @@ Created on Tue Jul  8 16:23:48 2025
 @author: simon
 """
 
-import sys; sys.path.append('../..')
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import unittest
 import numpy as np

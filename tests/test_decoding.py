@@ -4,7 +4,8 @@ Created on Tue Dec 17 16:05:05 2024
 
 @author: Simon
 """
-import sys; sys.path.append('../..')
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from meg_utils import decoding
 
 import unittest
