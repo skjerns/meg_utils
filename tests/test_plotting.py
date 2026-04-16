@@ -123,15 +123,37 @@ class TestSavefigVector:
         assert os.path.exists(str(tmp_path / 'vectors' / 'plot.svg'))
         plt.close('all')
 
-    def test_vector_metadata_json_written(self, tmp_path):
+    def test_vector_metadata_embedded_in_svg(self, tmp_path):
         fig = _simple_fig()
         out = str(tmp_path / 'plot.png')
         savefig(fig, out, save_vector=True, metadata={'key': 'value'})
-        json_file = str(tmp_path / 'vectors' / 'plot.json')
-        assert os.path.exists(json_file)
-        with open(json_file) as f:
-            data = json.load(f)
-        assert data['key'] == 'value'
+        svg_file = tmp_path / 'vectors' / 'plot.svg'
+        assert svg_file.exists()
+        content = svg_file.read_text()
+        assert '"key": "value"' in content or '"key":"value"' in content
+        plt.close('all')
+
+    def test_vector_metadata_embedded_in_pdf(self, tmp_path):
+        from pypdf import PdfReader
+        fig = _simple_fig()
+        out = str(tmp_path / 'plot.png')
+        savefig(fig, out, save_vector=True, metadata={'key': 'value'})
+        pdf_file = tmp_path / 'vectors' / 'plot.pdf'
+        assert pdf_file.exists()
+        reader = PdfReader(str(pdf_file))
+        info = reader.metadata
+        # metadata JSON is in the Keywords field
+        assert info.get('/Keywords') is not None
+        assert 'value' in info['/Keywords']
+        plt.close('all')
+
+    def test_vector_no_json_sidecar(self, tmp_path):
+        """JSON sidecar file should no longer be created."""
+        fig = _simple_fig()
+        out = str(tmp_path / 'plot.png')
+        savefig(fig, out, save_vector=True, metadata={'key': 'value'})
+        json_file = tmp_path / 'vectors' / 'plot.json'
+        assert not json_file.exists()
         plt.close('all')
 
     def test_vector_no_json_when_metadata_false(self, tmp_path):

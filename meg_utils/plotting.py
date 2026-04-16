@@ -496,9 +496,10 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
     - The function ensures the output directory exists by creating it if necessary.
     - Supported file extensions include 'png', 'jpg', 'svg', and 'pdf'. If no
       extension is provided, '.png' is used by default.
-    - Metadata is only supported for PNG and JPG formats.
     - For PNG: metadata keys and values are stored as text chunks
     - For JPG: metadata is JSON-encoded and stored as a JPEG comment
+    - For SVG: metadata is JSON-encoded in the Dublin Core Description element
+    - For PDF: metadata is JSON-encoded in the Keywords field of the PDF info dict
 
     Examples
     --------
@@ -542,16 +543,32 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
         vec_kwargs = {k: v for k, v in kwargs.items() if k != 'dpi'}
         for ext in ('svg', 'pdf'):
             vec_file = os.path.join(vec_dir, f'{basename}.{ext}')
-            fig.savefig(vec_file, **vec_kwargs)
-        if resolved_metadata:
-            json_file = os.path.join(vec_dir, f'{basename}.json')
-            with open(json_file, 'w') as f:
-                json.dump(resolved_metadata, f, indent=4)
+            ext_kwargs = dict(vec_kwargs)
+            if resolved_metadata:
+                ext_kwargs['metadata'] = _metadata_for_vector(
+                    resolved_metadata, ext)
+            fig.savefig(vec_file, **ext_kwargs)
 
     # Add metadata to PNG or JPG files if provided
     if resolved_metadata:
         _add_image_metadata(file, resolved_metadata)
 
+
+
+def _metadata_for_vector(metadata, fmt):
+    """Convert a metadata dict into the format accepted by Matplotlib's
+    SVG/PDF backends.
+
+    For **PDF**, the custom metadata is JSON-encoded into the ``Keywords``
+    field of the PDF info dictionary.  For **SVG**, it is stored in the
+    Dublin-Core ``Description`` element.
+    """
+    meta_json = json.dumps(metadata)
+    title = metadata.get('script_path', '')
+    if fmt == 'pdf':
+        return {'Title': title, 'Keywords': meta_json}
+    else:  # svg
+        return {'Title': title, 'Description': meta_json}
 
 
 def _generate_default_metadata():
