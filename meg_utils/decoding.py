@@ -961,6 +961,176 @@ class LogisticRegressionOvaNegX(LogisticRegression):
             proba.append(p)
         return np.array(proba).T
 
+
+class LogisticRegressionOvaNegXLambda(LogisticRegression):
+    """
+    One-vs-all logistic regression with explicit negative samples.
+    This tries to copy the MATLAB way of doing things as closely as possible
+
+    Trains one binary LogisticRegression per class using in-class positives
+    and out-of-class plus optional external negatives. Regularization is
+    parameterized by lambda_ (matching MATLAB's lassoglm convention) rather
+    than sklearn's C; conversion C = 1 / (N * lambda_) is applied per class
+    using the per-class training-set size N.
+    """
+
+    def __init__(
+        self,
+        base_clf=None,
+        penalty="l1",
+        lambda_=0.006,
+        solver="liblinear",
+        max_iter=1000,
+        neg_x_ratio=1.0,
+        rng=0,
+    ):
+        """
+        Parameters
+        ----------
+        base_clf : classifier or None
+            Base binary classifier to clone per class. If None, a
+            LogisticRegression is constructed from the remaining parameters.
+            If supplied, its C will be overwritten per class based on lambda_.
+        penalty : str
+            Regularization penalty passed to LogisticRegression.
+        lambda_ : float
+            MATLAB-style L1 regularization strength. Internally converted to
+            sklearn's C via C = 1 / (N * lambda_), where N is the number of
+            samples in each per-class binary fit.
+        solver : str
+            Optimization solver for LogisticRegression.
+        max_iter : int
+            Maximum number of solver iterations.
+        neg_x_ratio : float
+            Ratio of external negative samples relative to |X| used per class.
+        rng : int or numpy.random.Generator
+            Seed or generator for negative-sample subsampling.
+        """
+        self.base_clf = None if base_clf is None else base_clf  # just for __repr__
+
+        if base_clf is None:
+            base_clf = LogisticRegression(
+                l1_ratio=1.0 if penalty == 'l1' else 0.0,
+                C=1.0,  # placeholder, overwritten per class in fit()
+                solver=solver,
+                max_iter=max_iter,
+                random_state=0,  # will be overwritten later anyway
+            )
+        assert is_classifier(
+            base_clf
+        ), f"Must supply classifier, but supplied {base_clf}"
+
+        self.base_clf_ = base_clf
+        self.neg_x_ratio = neg_x_ratio
+        self.lambda_ = lambda_
+        self.max_iter = max_iter
+        self.solver = solver
+        self.rng = np.random.default_rng(rng)
+
+        LogisticRegression.__init__(
+            self,
+            penalty=penalty,
+            C=1.0,  # placeholder; effective C set per class in fit()
+            solver=solver,
+            max_iter=max_iter,
+        )
+
+    def reset_random_state(self, rng=0):
+        self.rng = np.random.default_rng(rng)
+        return self
+
+    def fit(self, X, y, neg_x=None, neg_x_ratio=None):
+        """
+        Fit one binary classifier per class.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Training feature matrix.
+        y : array-like, shape (n_samples,)
+            Class labels.
+        neg_x : array-like or None, shape (n_neg, n_features) or 3d
+            if 3d array is given it is assumed to be (n_trial, n_features, n_time)
+            and samples will be drawn trial-balanced
+            External negative samples added to each one-vs-all problem.
+        neg_x_ratio : float or None
+            Overrides instance neg_x_ratio for this fit call.
+
+        Returns
+        -------
+        self
+            Fitted estimator.
+        """
+        self.classes_ = np.unique(y)
+        neg_x_ratio = self.neg_x_ratio if neg_x_ratio is None else neg_x_ratio
+        models = []
+        intercepts = []
+        coefs = []
+
+        for class_ in self.classes_:
+            clf = clone(self.base_clf_)
+            clf.set_params(random_state=self.rng.integers(2**32 - 1))
+            idx_class = y == class_
+            true_x = X[idx_class]
+            false_x = X[~idx_class]
+
+            if neg_x is not None:
+                n_null = int(len(false_x) * neg_x_ratio)
+
+                if neg_x.ndim == 2:
+                    neg_x = np.reshape(neg_x.T, [-1, *neg_x.T.shape])
+
+                idx_trial = np.arange(n_null) % len(neg_x)
+
+                takex = dict(zip(*np.unique(idx_trial, return_counts=True)))
+                neg_trials = []
+                for idx, n in takex.items():
+                    sel = self.rng.choice(neg_x.shape[-1], n, replace=False)
+                    neg_trials.extend(neg_x[idx, :, sel])
+
+                assert len(neg_trials) == n_null, 'sanity check failed'
+                false_x = np.vstack([false_x, neg_trials])
+
+            data_x = np.vstack([true_x, false_x])
+            data_y = np.hstack([np.ones(len(true_x)), np.zeros(len(false_x))])
+
+            # convert MATLAB-style lambda to sklearn C using actual N for this fit
+            n_samples = len(data_y)
+            C_eff = 1.0 / (n_samples * self.lambda_)
+            clf.set_params(C=C_eff)
+
+            clf.fit(data_x, data_y)
+            models.append(clf)
+            intercepts.append(clf.intercept_)
+            coefs.append(clf.coef_)
+
+        self.models = models
+        self.intercept_ = np.squeeze(intercepts)
+        self.coef_ = np.squeeze(coefs)
+
+        return self
+
+    def predict_proba(self, X):
+        """
+        Predict per-class probabilities.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Input feature matrix.
+
+        Returns
+        -------
+        proba : ndarray, shape (n_samples, n_classes)
+            Positive-class probabilities from each binary model.
+        """
+        proba = []
+        for clf in self.models:
+            p = clf.predict_proba(X)[:, 1]
+            proba.append(p)
+        return np.array(proba).T
+
+
 #%% main
 if __name__=='__main__':
     data_x = np.random.rand(100, 306, 101)
