@@ -45,7 +45,7 @@ class Stop(KeyboardInterrupt):
 
 def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
                subfolders=None, only_folders=False, max_results=None,
-               case_sensitive=False):
+               case_sensitive=False, as_path=False):
     """List files in a directory matching given extensions or glob patterns.
 
     Parameters
@@ -71,6 +71,8 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
         Stop after collecting this many results.
     case_sensitive : bool, default False
         Match patterns case-sensitively.
+    as_path : bool, default False
+        return pathlib.Path instead of strings
 
     Returns
     -------
@@ -133,7 +135,10 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
     # by default: return strings instead of Path objects
     files = [str(file) for file in files]
     files = set(files)  # filter duplicates
-    return sorted(files, key=natsort_key)
+    files_sorted = sorted(files, key=natsort_key)
+    if as_path:
+        files_sorted = [Path(p) for p in files_sorted]
+    return files_sorted
 
 def get_streaks(arr):
     """helper function to get indices of streaks automatically
