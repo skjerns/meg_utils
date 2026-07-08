@@ -11,7 +11,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from meg_utils.misc import to_long_df, long_df_to_array, convert_to_numeric
+from meg_utils.misc import (to_long_df, long_df_to_array, convert_to_numeric,
+                            hash_file)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +428,41 @@ class TestConvertToNumeric:
         out = convert_to_numeric(df)
         # should not error; exact dtype depends on convert_dtypes behavior
         assert len(out) == 3
+
+
+# ---------------------------------------------------------------------------
+# hash_file
+# ---------------------------------------------------------------------------
+
+# all hashlib-guaranteed algorithms whose hexdigest() takes no arguments;
+# shake_128/shake_256 are excluded (their hexdigest requires a length)
+HASH_METHODS = ['md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512',
+                'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512',
+                'blake2b', 'blake2s']
+
+
+class TestHashFile:
+
+    @pytest.mark.parametrize('method', HASH_METHODS)
+    def test_matches_hashlib(self, tmp_path, method):
+        """hash_file matches a direct hashlib digest for every supported method."""
+        import hashlib
+        file = tmp_path / 'data.bin'
+        data = b'meg_utils' * 10000
+        file.write_bytes(data)
+        assert hash_file(file, method=method) == hashlib.new(method, data).hexdigest()
+
+    def test_default_is_md5(self, tmp_path):
+        import hashlib
+        file = tmp_path / 'data.bin'
+        file.write_bytes(b'hello world')
+        assert hash_file(file) == hashlib.md5(b'hello world').hexdigest()
+
+    def test_unknown_method_raises(self, tmp_path):
+        file = tmp_path / 'data.bin'
+        file.write_bytes(b'x')
+        with pytest.raises(ValueError):
+            hash_file(file, method='not_a_hash')
 
 
 if __name__ == "__main__":

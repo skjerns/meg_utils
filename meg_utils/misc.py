@@ -329,6 +329,28 @@ def hash_md5(input_string, length=8):
     md5_hash = hashlib.md5(input_bytes).hexdigest()
     return md5_hash[:length]
 
+def hash_file(file, method='md5'):
+    """returns the hexdigested hash for the binary-read file provided
+    for any applicable method thath hashlib offers
+
+    Parameters
+    ----------
+    file : str or pathlib.Path
+        path to the file to hash.
+    method : str, optional
+        name of any hash algorithm offered by hashlib
+        (e.g. 'md5', 'sha1', 'sha256'). The default is 'md5'.
+
+    Returns
+    -------
+    str
+        hexdigest of the file contents.
+    """
+    hasher = hashlib.new(method)
+    with open(file, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 def make_seed(*args):
     """
