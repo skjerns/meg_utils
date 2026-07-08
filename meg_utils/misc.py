@@ -46,25 +46,36 @@ class Stop(KeyboardInterrupt):
 def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
                subfolders=None, only_folders=False, max_results=None,
                case_sensitive=False):
-    """
-    will make a list of all files with extention exts (list)
-    found in the path and possibly all subfolders and return
-    a list of all files matching this pattern
+    """List files in a directory matching given extensions or glob patterns.
 
-    :param path:  location to find the files
-    :type  path:  str
-    :param exts:  extension of the files (e.g. .jpg, .jpg or .png, png)
-                  Will be turned into a pattern internally
-    :type  exts:  list or str
-    :param pattern: A pattern that is supported by pathlib.Path,
-                  e.g. '*.txt', '**\rfc_*.clf'
-    :type:        str
-    :param fullpath:  give the filenames with path
-    :type  fullpath:  bool
-    :param subfolders
-    :param return_strings: return strings, else returns Path objects
-    :return:      list of file names
-    :type:        list of str
+    Parameters
+    ----------
+    path : str
+        Directory to search in.
+    exts : str or list, optional
+        Extension(s) to match (e.g. '.jpg' or ['jpg', 'png']). Each is
+        turned into a `*ext` glob pattern internally.
+    patterns : str or list, optional
+        Glob pattern(s) supported by pathlib.Path (e.g. '*.txt', 'rfc_*.clf').
+        Combined with any patterns derived from `exts`. Defaults to '*' when
+        neither `exts` nor `patterns` is given.
+    relative : bool, default False
+        Return paths relative to `path` instead of absolute.
+    recursive : bool, default False
+        Also search subfolders (prepends '**/' to each pattern).
+    subfolders : bool, optional
+        Deprecated alias for `recursive`.
+    only_folders : bool, default False
+        Return matching directories instead of files.
+    max_results : int, optional
+        Stop after collecting this many results.
+    case_sensitive : bool, default False
+        Match patterns case-sensitively.
+
+    Returns
+    -------
+    list of str
+        Naturally sorted, de-duplicated file (or folder) paths.
     """
     def insensitive_glob(pattern):
         f = lambda c: '[%s%s]' % (c.lower(), c.upper()) if c.isalpha() else c
