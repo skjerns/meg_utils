@@ -712,6 +712,34 @@ class TestFilecache:
         assert read.__name__ == 'read'
         assert read.__doc__ is None or 'counting' not in read.__doc__
 
+    def test_without_a_memory_it_raises(self, tmp_path):
+        """filecache must not select a cache location on its own"""
+        with pytest.raises(ValueError):
+            @filecache('file')
+            def read(file):
+                return file
+
+    def test_without_a_memory_it_raises_in_auto_mode(self, tmp_path):
+        with pytest.raises(ValueError):
+            @filecache()
+            def read(file):
+                return file
+
+    def test_memory_none_switches_the_cache_off(self, tmp_path):
+        """Memory(None) is a cache that does nothing, and is accepted"""
+        from joblib import Memory
+        calls = []
+
+        @filecache('file', memory=Memory(None, verbose=0))
+        def read(file):
+            calls.append(file)
+            return Path(file).read_text()
+
+        file = tmp_path / 'a.log'
+        file.write_text('content')
+        assert read(file) == read(file) == 'content'
+        assert len(calls) == 2, 'it cached although the cache is off'
+
 
 class TestFilecacheAuto:
     """filecache() without named parameters finds the files itself"""

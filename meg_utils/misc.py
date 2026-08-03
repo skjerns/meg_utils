@@ -456,9 +456,10 @@ def filecache(*file_params, memory=None, verbose=0):
         taking part in the key from then on, and the result from when it was
         still missing is not reused.
     memory : joblib.Memory | str | Path, optional
-        Where to cache. A Memory is used as it is, a path is turned into one.
-        The default is ~/.cache/meg_utils/filecache. Ignored when
-        chained below a memory.cache, that Memory is used instead.
+        Where to keep the cache. A Memory is used as it is. A path becomes a
+        Memory. Give this parameter, or put the decorator on top of a
+        memory.cache. If you do neither, filecache raises a ValueError.
+        A memory.cache below the decorator has priority.
     verbose : int
         Verbosity of a Memory that is created here, ignored otherwise.
 
@@ -469,9 +470,16 @@ def filecache(*file_params, memory=None, verbose=0):
         bypass the cache) and `.cached` (the joblib MemorizedFunc, e.g. for
         `.clear()`) attached to it.
 
+    Raises
+    ------
+    ValueError
+        If there is no Memory. filecache does not select a cache location
+        for you, because that location is a decision of the application.
+        Use Memory(None) if you want the cache to do nothing.
+
     Examples
     --------
-    >>> @filecache('log_file')
+    >>> @filecache('log_file', memory='/tmp/my-cache')
     ... def parse_log(log_file, mode='fast'):
     ...     return open(log_file).read()
 
@@ -487,7 +495,7 @@ def filecache(*file_params, memory=None, verbose=0):
     without any parameter names, whichever argument happens to be an
     existing file is fingerprinted:
 
-    >>> @filecache()
+    >>> @filecache(memory='/tmp/my-cache')
     ... def check_anything(this, that):
     ...     ...
     """
@@ -495,12 +503,7 @@ def filecache(*file_params, memory=None, verbose=0):
     from joblib.memory import MemorizedFunc
     # filecache() and filecache(None) both mean "find them yourself"
     file_params = [param for param in file_params if param is not None]
-    if isinstance(memory, Memory):
-        pass
-    elif memory is None:
-        memory = Memory(str(Path.home() / '.cache' / 'meg_utils' /
-                            'filecache'), verbose=verbose)
-    else:
+    if memory is not None and not isinstance(memory, Memory):
         memory = Memory(str(memory), verbose=verbose)
 
     def auto_signature(value):
@@ -536,6 +539,12 @@ def filecache(*file_params, memory=None, verbose=0):
             func_memory = Memory(str(location), mmap_mode=func.mmap_mode,
                                  compress=func.compress, verbose=verbose)
             func = func.func
+
+        if func_memory is None:
+            raise ValueError(
+                f'filecache has no cache for {func.__name__}(). Give it a '
+                'memory=... , or put the decorator on top of a memory.cache. '
+                'Use Memory(None) to switch the cache off.')
 
         signature = inspect.signature(func)
         unknown = [p for p in file_params if p not in signature.parameters]
