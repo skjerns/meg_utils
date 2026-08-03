@@ -164,27 +164,26 @@ class TestLongDfToArraySubsetColumns:
         assert out.shape == (3, 4)
         assert np.allclose(out, arr)
 
-    def test_subset_of_dim_columns_collapses_last_value(self):
-        """Requesting fewer dims than in the df collapses the dropped dim (last write wins)."""
+    def test_subset_of_dim_columns_raises_on_collapse(self):
+        """Requesting fewer dims than in the df would silently collapse the
+        dropped dim depending on row order — that's ambiguous, so it must raise."""
         arr = np.zeros((2, 3, 4))
         arr[0, :, :] = 1.0
         arr[1, :, :] = 2.0
         df = to_long_df(arr, columns=['subject', 'trial', 'time'], value_name='v')
-        # Ask only for subject × trial — each (subject, trial) pair has 4 time entries;
-        # the final array should still have shape (2, 3) with all entries set.
-        out = long_df_to_array(df, columns=['subject', 'trial'], value_name='v')
-        assert out.shape == (2, 3)
-        # All writes for subject 0 use value 1.0, subject 1 use value 2.0
-        assert np.all(out[0, :] == 1.0)
-        assert np.all(out[1, :] == 2.0)
+        # Ask only for subject × trial — each (subject, trial) pair has 4 time
+        # entries mapping to the same cell, which is a real ambiguity, not a
+        # legitimate subset request.
+        with pytest.raises(ValueError):
+            long_df_to_array(df, columns=['subject', 'trial'], value_name='v')
 
-    def test_single_column_from_multidim_df(self):
-        """Requesting a single column from a 3-D df gives a 1-D array."""
+    def test_single_column_from_multidim_df_raises_on_collapse(self):
+        """Requesting a single column from a 3-D df collapses the other two
+        dims, which is ambiguous when their values differ and must raise."""
         arr = RNG.random((5, 3, 2))
         df = to_long_df(arr, columns=['a', 'b', 'c'], value_name='v')
-        # Only reconstruct along dimension 'a' (5 unique values)
-        out = long_df_to_array(df, columns=['a'], value_name='v')
-        assert out.shape == (5,)
+        with pytest.raises(ValueError):
+            long_df_to_array(df, columns=['a'], value_name='v')
 
     def test_reordered_subset(self):
         """Columns can be requested in a different order than they appear in the df."""

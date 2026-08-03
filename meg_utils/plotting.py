@@ -500,6 +500,8 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
     - For JPG: metadata is JSON-encoded and stored as a JPEG comment
     - For SVG: metadata is JSON-encoded in the Dublin Core Description element
     - For PDF: metadata is JSON-encoded in the Keywords field of the PDF info dict
+    - When `save_vector` is True, an EPS copy is also written to `vectors/`
+      (EPS does not support embedded metadata, so none is added there)
 
     Examples
     --------
@@ -541,10 +543,10 @@ def savefig(fig, file, tight=True, despine=True, metadata=None,
         os.makedirs(vec_dir, exist_ok=True)
         basename = os.path.splitext(os.path.basename(file))[0]
         vec_kwargs = {k: v for k, v in kwargs.items() if k != 'dpi'}
-        for ext in ('svg', 'pdf'):
+        for ext in ('svg', 'eps', 'pdf'):
             vec_file = os.path.join(vec_dir, f'{basename}.{ext}')
             ext_kwargs = dict(vec_kwargs)
-            if resolved_metadata:
+            if resolved_metadata and ext in ('svg', 'pdf'):
                 ext_kwargs['metadata'] = _metadata_for_vector(
                     resolved_metadata, ext)
             fig.savefig(vec_file, **ext_kwargs)
@@ -903,6 +905,9 @@ def tornadoplot(data, x=None, y=None, center=0, low_colour='#4c72b0',
     # assign a unique hue per row so seaborn accepts per-bar colours
     df['_hue'] = range(len(df))
     palette_map = dict(enumerate(colours))
+    # seaborn desaturates palette colours by default (saturation=0.75);
+    # disable that so low_colour/high_colour render exactly as given
+    kwargs.setdefault('saturation', 1)
 
     if orient == 'h':
         sns.barplot(data=df, x=x, y=y, hue='_hue', palette=palette_map,

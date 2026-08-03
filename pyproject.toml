@@ -32,5 +32,11 @@ dependencies = [
     "imageio",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pypdf",
+]
+
 [project.urls]
 "Homepage" = "https://github.com/simon-kern/meg_utils"
