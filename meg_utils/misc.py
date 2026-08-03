@@ -416,7 +416,7 @@ def file_signature(file):
     return (str(path.resolve()), stat.st_size, stat.st_mtime_ns,
             stat.st_ctime_ns, stat.st_ino)
 
-def cache_on_files(*file_params, memory=None, verbose=0):
+def filecache(*file_params, memory=None, verbose=0):
     """disk-cache a function, invalidating it when its input *files* change
 
     joblib.Memory keys its cache on the arguments a function was called with.
@@ -430,11 +430,11 @@ def cache_on_files(*file_params, memory=None, verbose=0):
     Can be chained on top of a joblib cache, to pick the Memory and its
     options up from there:
 
-        @cache_on_files('filename')
+        @filecache('filename')
         @memory.cache
         def func(filename): ...
 
-    Note that this only works in that order (cache_on_files on the outside),
+    Note that this only works in that order (filecache on the outside),
     and that it is not a chain of two caches: the fingerprint has to take
     part in the key that joblib computes, and joblib only ever hashes the
     arguments of the function it wraps itself. So the MemorizedFunc below is
@@ -457,7 +457,7 @@ def cache_on_files(*file_params, memory=None, verbose=0):
         still missing is not reused.
     memory : joblib.Memory | str | Path, optional
         Where to cache. A Memory is used as it is, a path is turned into one.
-        The default is ~/.cache/meg_utils/cache_on_files. Ignored when
+        The default is ~/.cache/meg_utils/filecache. Ignored when
         chained below a memory.cache, that Memory is used instead.
     verbose : int
         Verbosity of a Memory that is created here, ignored otherwise.
@@ -471,14 +471,14 @@ def cache_on_files(*file_params, memory=None, verbose=0):
 
     Examples
     --------
-    >>> @cache_on_files('log_file')
+    >>> @filecache('log_file')
     ... def parse_log(log_file, mode='fast'):
     ...     return open(log_file).read()
 
     a parameter can just as well hold several files, and the cache is
     invalidated if any one of them changes:
 
-    >>> @cache_on_files('recording', 'log_files', memory='/tmp/my-cache')
+    >>> @filecache('recording', 'log_files', memory='/tmp/my-cache')
     ... def check(recording, log_files, strict=True):
     ...     ...
     >>> check.uncached(rec, logs)   # doctest: +SKIP
@@ -487,19 +487,19 @@ def cache_on_files(*file_params, memory=None, verbose=0):
     without any parameter names, whichever argument happens to be an
     existing file is fingerprinted:
 
-    >>> @cache_on_files()
+    >>> @filecache()
     ... def check_anything(this, that):
     ...     ...
     """
     from joblib import Memory
     from joblib.memory import MemorizedFunc
-    # cache_on_files() and cache_on_files(None) both mean "find them yourself"
+    # filecache() and filecache(None) both mean "find them yourself"
     file_params = [param for param in file_params if param is not None]
     if isinstance(memory, Memory):
         pass
     elif memory is None:
         memory = Memory(str(Path.home() / '.cache' / 'meg_utils' /
-                            'cache_on_files'), verbose=verbose)
+                            'filecache'), verbose=verbose)
     else:
         memory = Memory(str(memory), verbose=verbose)
 
@@ -529,7 +529,7 @@ def cache_on_files(*file_params, memory=None, verbose=0):
             # chained on top of a memory.cache: take that Memory over, so
             # that the result ends up where the user asked for it
             assert not func.ignore, ('ignore= cannot be passed through '
-                                     'cache_on_files, put it on the outside')
+                                     'filecache, put it on the outside')
             location = Path(func.store_backend.location)
             if location.name == 'joblib':  # Memory appends this itself
                 location = location.parent
@@ -542,7 +542,7 @@ def cache_on_files(*file_params, memory=None, verbose=0):
         assert not unknown, f'{unknown} are no parameters of {func.__name__}'
         reserved = [p for p in ('_file_signatures', '_source')
                     if p in signature.parameters]
-        assert not reserved, f'{reserved} are reserved by cache_on_files'
+        assert not reserved, f'{reserved} are reserved by filecache'
 
         # joblib identifies a function by module+qualname, and invalidates the
         # cache when its source changes. Both would point at the wrapper here,

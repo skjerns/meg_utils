@@ -16,7 +16,7 @@ from pathlib import Path
 
 from meg_utils.misc import (to_long_df, long_df_to_array, convert_to_numeric,
                             hash_file, list_files, file_signature,
-                            cache_on_files)
+                            filecache)
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +532,7 @@ class TestListFiles:
 
 
 # ---------------------------------------------------------------------------
-# file_signature / cache_on_files
+# file_signature / filecache
 # ---------------------------------------------------------------------------
 
 def touch_later(file, seconds=5):
@@ -586,13 +586,13 @@ class TestFileSignature:
         assert file_signature([one, two]) != before
 
 
-class TestCacheOnFiles:
+class TestFilecache:
 
     def make_counting_func(self, tmp_path, params=('file',), **kwargs):
         """a cached function that counts how often its body actually ran"""
         calls = []
 
-        @cache_on_files(*params, memory=tmp_path / 'cache', **kwargs)
+        @filecache(*params, memory=tmp_path / 'cache', **kwargs)
         def read(file, mode='text'):
             calls.append(file)
             return Path(file).read_text() + mode
@@ -635,7 +635,7 @@ class TestCacheOnFiles:
     def test_list_parameter(self, tmp_path):
         calls = []
 
-        @cache_on_files('files', memory=tmp_path / 'cache')
+        @filecache('files', memory=tmp_path / 'cache')
         def read_all(files):
             calls.append(files)
             return ''.join([Path(f).read_text() for f in files])
@@ -655,11 +655,11 @@ class TestCacheOnFiles:
         not share a cache entry when called with identical arguments"""
         memory = tmp_path / 'cache'
 
-        @cache_on_files('file', memory=memory)
+        @filecache('file', memory=memory)
         def first(file):
             return 'first'
 
-        @cache_on_files('file', memory=memory)
+        @filecache('file', memory=memory)
         def second(file):
             return 'second'
 
@@ -690,7 +690,7 @@ class TestCacheOnFiles:
         """a file that only appears later must not reuse the earlier result"""
         calls = []
 
-        @cache_on_files('file', memory=tmp_path / 'cache')
+        @filecache('file', memory=tmp_path / 'cache')
         def read_or_none(file):
             calls.append(file)
             return Path(file).read_text() if Path(file).exists() else None
@@ -703,7 +703,7 @@ class TestCacheOnFiles:
 
     def test_unknown_parameter_raises(self, tmp_path):
         with pytest.raises(AssertionError):
-            @cache_on_files('not_a_param', memory=tmp_path / 'cache')
+            @filecache('not_a_param', memory=tmp_path / 'cache')
             def func(file):
                 return file
 
@@ -713,13 +713,13 @@ class TestCacheOnFiles:
         assert read.__doc__ is None or 'counting' not in read.__doc__
 
 
-class TestCacheOnFilesAuto:
-    """cache_on_files() without named parameters finds the files itself"""
+class TestFilecacheAuto:
+    """filecache() without named parameters finds the files itself"""
 
     def make_auto(self, tmp_path):
         calls = []
 
-        @cache_on_files(memory=tmp_path / 'cache')
+        @filecache(memory=tmp_path / 'cache')
         def read(thing, other=None):
             calls.append(thing)
             try:
@@ -766,7 +766,7 @@ class TestCacheOnFilesAuto:
         """also in the second argument, and in a list of them"""
         calls = []
 
-        @cache_on_files(memory=tmp_path / 'cache')
+        @filecache(memory=tmp_path / 'cache')
         def read(label, files):
             calls.append(label)
             return ''.join([Path(f).read_text() for f in files])
@@ -782,10 +782,10 @@ class TestCacheOnFilesAuto:
         assert len(calls) == 2
 
     def test_none_argument_is_accepted(self, tmp_path):
-        """cache_on_files(None) means the same as cache_on_files()"""
+        """filecache(None) means the same as filecache()"""
         calls = []
 
-        @cache_on_files(None, memory=tmp_path / 'cache')
+        @filecache(None, memory=tmp_path / 'cache')
         def read(file):
             calls.append(file)
             return Path(file).read_text()
@@ -796,15 +796,15 @@ class TestCacheOnFilesAuto:
         assert len(calls) == 1
 
 
-class TestCacheOnFilesChained:
-    """@cache_on_files(...) stacked on top of @memory.cache"""
+class TestFilecacheChained:
+    """@filecache(...) stacked on top of @memory.cache"""
 
     def make_chained(self, tmp_path, **cache_kwargs):
         from joblib import Memory
         memory = Memory(str(tmp_path / 'chained'), verbose=0)
         calls = []
 
-        @cache_on_files('file')
+        @filecache('file')
         @memory.cache(**cache_kwargs)
         def read(file, mode='text'):
             calls.append(file)
@@ -825,7 +825,7 @@ class TestCacheOnFilesChained:
 
     def test_uses_the_memory_of_the_inner_cache(self, tmp_path):
         """the result must land in the Memory the user handed to memory.cache,
-        not in the default location of cache_on_files"""
+        not in the default location of filecache"""
         read, _, memory = self.make_chained(tmp_path)
         file = tmp_path / 'a.log'
         file.write_text('content')
