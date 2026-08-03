@@ -53,12 +53,14 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
     path : str
         Directory to search in.
     exts : str or list, optional
-        Extension(s) to match (e.g. '.jpg' or ['jpg', 'png']). Each is
-        turned into a `*ext` glob pattern internally.
+        Extension(s) to match (e.g. '.jpg' or ['jpg', 'png']). Applied
+        additively with `patterns`: files are first matched against
+        `patterns`, then filtered down to only those matches whose
+        extension is in `exts`. If `patterns` is not given, it defaults
+        to '*' so `exts` alone still filters the whole directory.
     patterns : str or list, optional
         Glob pattern(s) supported by pathlib.Path (e.g. '*.txt', 'rfc_*.clf').
-        Combined with any patterns derived from `exts`. Defaults to '*' when
-        neither `exts` nor `patterns` is given.
+        Defaults to '*' when neither `exts` nor `patterns` is given.
     relative : bool, default False
         Return paths relative to `path` instead of absolute.
     recursive : bool, default False
@@ -96,26 +98,27 @@ def list_files(path, exts=None, patterns=None, relative=False, recursive=False,
     if patterns is None: patterns = []
     if exts is None: exts = []
 
-    if not patterns and not exts:
+    if not patterns:
+        # exts alone (or nothing at all) should still search the whole dir
         patterns = ['*']
 
-    for ext in exts:
-        ext = ext.replace('*', '')
-        pattern = '*' + ext
-        patterns.append(pattern.lower())
+    # normalize extensions, e.g. '*.jpg' / '.jpg' / 'jpg' -> 'jpg'
+    exts = [ext.replace('*', '').lstrip('.').lower() for ext in exts]
 
     # if recursiveness is asked, prepend the double asterix to each pattern
     if recursive: patterns = ['**/' + pattern for pattern in patterns]
 
-    # collect files for each pattern
+    # collect files for each pattern, then (additively) filter by extension
     files = []
     fcount = 0
     for pattern in patterns:
         if not case_sensitive:
             pattern = insensitive_glob(pattern)
         for filename in p.glob(pattern):
-            if filename.is_file() and filename not in files:
-                if only_folders:
+            if filename.is_file():
+                if only_folders or filename in files:
+                    continue
+                if exts and filename.suffix.lstrip('.').lower() not in exts:
                     continue
                 files.append(filename)
                 fcount += 1
@@ -329,7 +332,7 @@ def hash_md5(input_string, length=8):
     md5_hash = hashlib.md5(input_bytes).hexdigest()
     return md5_hash[:length]
 
-def hash_file(file, method='md5'):
+def hash_file(file, method='md5', use_cache=False):
     """returns the hexdigested hash for the binary-read file provided
     for any applicable method thath hashlib offers
 
@@ -340,17 +343,271 @@ def hash_file(file, method='md5'):
     method : str, optional
         name of any hash algorithm offered by hashlib
         (e.g. 'md5', 'sha1', 'sha256'). The default is 'md5'.
+    use_cache : bool, optional
+        if True, avoid re-reading the file contents when possible: the hash
+        is looked up from a joblib disk cache keyed on the file path plus its
+        file_signature(), the quick&dirty fingerprint of its `os.stat`. If
+        the fingerprint is unchanged from a previous call, the cached hash is
+        returned instead of re-hashing. This can miss a change in the rare
+        case content is overwritten while size and both timestamps stay
+        identical. The default is False (always re-hash).
 
     Returns
     -------
     str
         hexdigest of the file contents.
     """
-    hasher = hashlib.new(method)
-    with open(file, 'rb') as f:
-        for chunk in iter(lambda: f.read(65536), b''):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    from joblib import Memory
+    memory = Memory(location=str(Path.home() / '.cache' / 'meg_utils' / 'hash_file'),
+                    verbose=0)
+
+    def _read_hash():
+        hasher = hashlib.new(method)
+        with open(file, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    if not use_cache:
+        return _read_hash()
+
+    @memory.cache
+    def _cached_hash(path, method, signature):
+        # signature is unused, it is only here to be part of the cache key
+        return _read_hash()
+
+    return _cached_hash(str(Path(file).resolve()), method,
+                        file_signature(file))
+
+def file_signature(file):
+    """cheap fingerprint of a file, that changes when the file changes
+
+    Uses the same os.stat fields as hash_file(use_cache=True) - size, mtime,
+    ctime and inode - but never reads the contents, so there is no md5. It
+    therefore only weakly indicates that a file is still the same: it misses
+    a change in the rare case that contents are overwritten while size and
+    both timestamps stay identical.
+
+    Parameters
+    ----------
+    file : str | Path | list | tuple | None
+        A file path, or a list of them (e.g. several log files belonging to
+        one recording). Order is kept, so a reordered list is a new
+        signature. None and non-existing files each get their own signature,
+        so that a file appearing later does not reuse the result from when it
+        was still missing.
+
+    Returns
+    -------
+    tuple | None
+        (path, size, mtime_ns, ctime_ns, inode) for an existing file,
+        (path, None) for a missing one, None for None, and a tuple of these
+        for a list of files.
+    """
+    import os
+    if file is None:
+        return None
+    if isinstance(file, (list, tuple)):
+        return tuple([file_signature(f) for f in file])
+    path = Path(file)
+    if not path.exists():
+        return (str(path), None)
+    stat = os.stat(path)
+    return (str(path.resolve()), stat.st_size, stat.st_mtime_ns,
+            stat.st_ctime_ns, stat.st_ino)
+
+def filecache(*file_params, memory=None, verbose=0):
+    """disk-cache a function, invalidating it when its input *files* change
+
+    joblib.Memory keys its cache on the arguments a function was called with.
+    For a function that takes a file *path* that is not enough: the path
+    stays the same while the file behind it changes, and the stale result
+    would be returned forever. This decorator declares which parameters hold
+    file paths. On each call their file_signature() is computed and handed to
+    the cached function as an extra argument - unused by the body, but part
+    of the cache key, so a changed file misses the cache.
+
+    Can be chained on top of a joblib cache, to pick the Memory and its
+    options up from there:
+
+        @filecache('filename')
+        @memory.cache
+        def func(filename): ...
+
+    Note that this only works in that order (filecache on the outside),
+    and that it is not a chain of two caches: the fingerprint has to take
+    part in the key that joblib computes, and joblib only ever hashes the
+    arguments of the function it wraps itself. So the MemorizedFunc below is
+    unwrapped and rebuilt with the same Memory, rather than called through.
+
+    The original function is kept as `.uncached` and the joblib MemorizedFunc
+    as `.cached`, so one function's cache can be cleared without touching the
+    rest.
+
+    Parameters
+    ----------
+    *file_params : str, optional
+        Names of the parameters that hold a file path or a list of file
+        paths. Must be parameters of the decorated function. If none are
+        given (or None), every argument is inspected on each call instead,
+        and the ones that point at an existing file are fingerprinted. A
+        path that does not exist is left alone and simply
+        hashed as the string it is, so a file that only appears later starts
+        taking part in the key from then on, and the result from when it was
+        still missing is not reused.
+    memory : joblib.Memory | str | Path, optional
+        Where to keep the cache. A Memory is used as it is. A path becomes a
+        Memory. Give this parameter, or put the decorator on top of a
+        memory.cache. If you do neither, filecache raises a ValueError.
+        A memory.cache below the decorator has priority.
+    verbose : int
+        Verbosity of a Memory that is created here, ignored otherwise.
+
+    Returns
+    -------
+    callable
+        The wrapped function, with `.uncached` (the undecorated function, to
+        bypass the cache) and `.cached` (the joblib MemorizedFunc, e.g. for
+        `.clear()`) attached to it.
+
+    Raises
+    ------
+    ValueError
+        If there is no Memory. filecache does not select a cache location
+        for you, because that location is a decision of the application.
+        Use Memory(None) if you want the cache to do nothing.
+
+    Examples
+    --------
+    >>> @filecache('log_file', memory='/tmp/my-cache')
+    ... def parse_log(log_file, mode='fast'):
+    ...     return open(log_file).read()
+
+    a parameter can just as well hold several files, and the cache is
+    invalidated if any one of them changes:
+
+    >>> @filecache('recording', 'log_files', memory='/tmp/my-cache')
+    ... def check(recording, log_files, strict=True):
+    ...     ...
+    >>> check.uncached(rec, logs)   # doctest: +SKIP
+    >>> check.cached.clear()        # doctest: +SKIP
+
+    without any parameter names, whichever argument happens to be an
+    existing file is fingerprinted:
+
+    >>> @filecache(memory='/tmp/my-cache')
+    ... def check_anything(this, that):
+    ...     ...
+    """
+    from joblib import Memory
+    from joblib.memory import MemorizedFunc
+    # filecache() and filecache(None) both mean "find them yourself"
+    file_params = [param for param in file_params if param is not None]
+    if memory is not None and not isinstance(memory, Memory):
+        memory = Memory(str(memory), verbose=verbose)
+
+    def auto_signature(value):
+        """file_signature of value, but only if it is a file to begin with
+
+        Used when no file_params were named. Anything that is not path-like,
+        and any path that does not exist (yet), is left alone and ends up
+        hashed as the plain string it is. Strings that cannot even be a path
+        (too long, null bytes, ...) are answered with None instead of raising.
+        """
+        import os
+        if isinstance(value, (list, tuple)):
+            found = tuple([auto_signature(item) for item in value])
+            return found if any([s is not None for s in found]) else None
+        if not isinstance(value, (str, os.PathLike)):
+            return None
+        try:
+            exists = Path(value).is_file()
+        except (OSError, ValueError):
+            return None
+        return file_signature(value) if exists else None
+
+    def decorator(func):
+        func_memory = memory  # a local one, decorator can be reused
+        if isinstance(func, MemorizedFunc):
+            # chained on top of a memory.cache: take that Memory over, so
+            # that the result ends up where the user asked for it
+            assert not func.ignore, ('ignore= cannot be passed through '
+                                     'filecache, put it on the outside')
+            location = Path(func.store_backend.location)
+            if location.name == 'joblib':  # Memory appends this itself
+                location = location.parent
+            func_memory = Memory(str(location), mmap_mode=func.mmap_mode,
+                                 compress=func.compress, verbose=verbose)
+            func = func.func
+
+        if func_memory is None:
+            raise ValueError(
+                f'filecache has no cache for {func.__name__}(). Give it a '
+                'memory=... , or put the decorator on top of a memory.cache. '
+                'Use Memory(None) to switch the cache off.')
+
+        signature = inspect.signature(func)
+        unknown = [p for p in file_params if p not in signature.parameters]
+        assert not unknown, f'{unknown} are no parameters of {func.__name__}'
+        reserved = [p for p in ('_file_signatures', '_source')
+                    if p in signature.parameters]
+        assert not reserved, f'{reserved} are reserved by filecache'
+
+        # joblib identifies a function by module+qualname, and invalidates the
+        # cache when its source changes. Both would point at the wrapper here,
+        # so that every decorated function would end up in the same cache
+        # directory: @wraps copies the identity of the real function over, and
+        # its source is hashed into the key to keep the invalidation.
+        try:
+            source = inspect.getsource(func)
+        except (OSError, TypeError):  # e.g. defined in a REPL
+            source = f'{func.__module__}.{func.__qualname__}'
+        source_hash = hashlib.md5(source.encode()).hexdigest()[:8]
+
+        # joblib hashes a positional and a keyword argument differently, so
+        # f(x) and f(x=x) would end up as two cache entries. Passing
+        # everything by name avoids that (and makes defaults explicit, so
+        # f(x) and f(x, mode='text') share an entry as well). Only possible
+        # if every parameter *can* be passed by name.
+        by_name = all([p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                       for p in signature.parameters.values()])
+
+        # the two extra arguments come first and are positional: joblib
+        # cannot map keyword-only parameters of a *args function
+        def _cached(_file_signatures, _source, *args, **kwargs):
+            # both are ignored here, they only exist to become part of the
+            # cache key that joblib computes
+            return func(*args, **kwargs)
+
+        # copy the identity over by hand instead of using @wraps: wraps would
+        # also set __wrapped__, and joblib follows that to the signature of
+        # the original function, which does not take the two extra arguments
+        for attr in ('__module__', '__name__', '__qualname__', '__doc__'):
+            setattr(_cached, attr, getattr(func, attr, None))
+
+        cached = func_memory.cache(_cached)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            if file_params:
+                signatures = tuple([file_signature(bound.arguments.get(param))
+                                    for param in file_params])
+            else:
+                # no parameters declared: whatever is an existing file counts
+                found = [(name, auto_signature(value))
+                         for name, value in bound.arguments.items()]
+                signatures = tuple([(name, sig) for name, sig in found
+                                    if sig is not None])
+            if by_name:
+                return cached(signatures, source_hash, **bound.arguments)
+            return cached(signatures, source_hash, *args, **kwargs)
+
+        wrapper.uncached = func
+        wrapper.cached = cached
+        return wrapper
+    return decorator
 
 def make_seed(*args):
     """

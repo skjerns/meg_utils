@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "meg_utils"
 version = "0.1.0"
 authors = [
-  { name="Simon Kern", email="simon.kern@zi-mannheim.de" },
+  { name="Simon Kern"},
 ]
 description = "A collection of utility functions for MEG analysis."
 readme = "README.md"
@@ -32,5 +32,11 @@ dependencies = [
     "imageio",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pypdf",
+]
+
 [project.urls]
-"Homepage" = "https://github.com/simon-kern/meg_utils"
+"Homepage" = "https://github.com/skjerns/meg_utils"
