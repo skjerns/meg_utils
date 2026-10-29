@@ -845,7 +845,7 @@ class NormalizationStep(_BaseStep):
             data_normalized = self.norm_func(data)
             # Reconstruct the MNE object with normalized data
             if isinstance(obj, mne.io.BaseRaw):
-                obj_normalized = mne.io.RawArray(data_normalized, obj.info)
+                obj_normalized = mne.io.RawArray(data_normalized, obj.info, verbose='ERROR')
             else:  # mne.Epochs
                 obj_normalized = mne.EpochsArray(
                     data_normalized, obj.info, events=obj.events,
