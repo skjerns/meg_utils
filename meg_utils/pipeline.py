@@ -421,7 +421,7 @@ class FilterStep(_BaseStep):
     ):
         self.type_in = (mne.filter.FilterMixin,
                         ), 'Any MNE object that implements .filter'
-        self.type_out = (mne.io.BaseRaw,), ''
+        self.type_out = (mne.filter.FilterMixin,), 'Filtered object, same type as the input'
 
         params = self._get_param_names()
         for name in params:

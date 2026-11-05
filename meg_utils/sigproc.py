@@ -357,8 +357,6 @@ def get_alpha_peak(raw_or_data,
     -------
     alpha_peak : float
         Peak frequency in the α-band
-    src_chan   : int
-        Index of the channel with the highest α-band power
     freqs, psd : if `return_spectrum` is True
     """
     lo, hi = alpha_bounds
@@ -372,6 +370,8 @@ def get_alpha_peak(raw_or_data,
                              "not both.")
         picks = mne.read_vectorview_selection('occipital',
                                               info=raw_or_data.info)
+        # only occipital channels that are present, e.g. if mags were dropped
+        picks = [ch for ch in picks if ch in raw_or_data.ch_names]
         data = raw_or_data.get_data(picks=picks)         # shape: ch × time
         sfreq = raw_or_data.info['sfreq']
     else:                                                # ndarray input

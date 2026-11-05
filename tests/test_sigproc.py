@@ -179,5 +179,21 @@ class TestSlidingWindow(unittest.TestCase):
             sliding_window(np.arange(10), win_size=0)
 
 
+class TestGetAlphaPeak(unittest.TestCase):
+    def test_grad_only_raw(self):
+        """Raw without magnetometers uses the occipital grads that are present."""
+        import mne
+        from meg_utils.sigproc import get_alpha_peak
+        names = [ch.replace(' ', '') for ch in mne.read_vectorview_selection('occipital')]
+        grads = [ch for ch in names if ch[-1] in '23']  # MEGxxx2/3 are grads
+        sfreq = 100
+        t = np.arange(60 * sfreq) / sfreq
+        rng = np.random.default_rng(0)
+        data = np.sin(2 * np.pi * 10 * t) + rng.normal(size=(len(grads), len(t)))
+        raw = mne.io.RawArray(data * 1e-11, mne.create_info(grads, sfreq, 'grad'),
+                              verbose=False)
+        self.assertAlmostEqual(get_alpha_peak(raw), 10, delta=0.3)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
