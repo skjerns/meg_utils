@@ -635,6 +635,11 @@ def make_seed(*args):
     # Clip to 32-bit unsigned integer range
     return int(digest, 16) % (2**32)
 
+def get_rng(*args):
+    """helper function to get a seeded rng for arbitrary arguments"""
+    seed = make_seed(*args)
+    return np.random.default_rng(seed)
+
 
 def get_ch_neighbours(ch_name, n=9, return_idx=False,
                       layout_name='Vectorview-all', plot=False):
